@@ -9,6 +9,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
+import android.util.Log
 import android.widget.Button
 import java.io.File
 import java.io.FileOutputStream
@@ -22,6 +23,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        copyTessData(this)
 
         projectionManager =
             getSystemService(Context.MEDIA_PROJECTION_SERVICE)
@@ -39,16 +42,19 @@ class MainActivity : AppCompatActivity() {
         val tessdataDir = File(context.filesDir, "tessdata")
         if (!tessdataDir.exists()) tessdataDir.mkdirs()
 
-        val assetManager = context.assets
         val file = File(tessdataDir, "eng.traineddata")
         if (!file.exists()) {
-            assetManager.open("tessdata/eng.traineddata").use { input ->
+            context.assets.open("tessdata/eng.traineddata").use { input ->
                 FileOutputStream(file).use { output ->
                     input.copyTo(output)
                 }
             }
+            Log.d("OCR", "Copied eng.traineddata to ${file.absolutePath}")
+        } else {
+            Log.d("OCR", "Tessdata already exists at ${file.absolutePath}")
         }
     }
+
 
     override fun onActivityResult(
         requestCode: Int,

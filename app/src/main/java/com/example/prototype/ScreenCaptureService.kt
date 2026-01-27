@@ -70,10 +70,10 @@ class ScreenCaptureService : Service() {
                     val bitmap = imageToBitmap(image)
                     image.close()
                     // Run OCR off the main thread
-//                    Thread {
-//                        runOcr(bitmap)
-//                        bitmap.recycle()
-//                    }.start()
+                    Thread {
+                        runOcr(bitmap)
+                        bitmap.recycle()
+                    }.start()
 
                     Log.d("ScreenCaptureService", "Screenshot processed")
                 }
@@ -102,13 +102,22 @@ class ScreenCaptureService : Service() {
 
     // Stub for OCR processing
     private fun runOcr(bitmap: Bitmap) {
-        val tessBaseAPI = TessBaseAPI()
-        tessBaseAPI.init(filesDir.absolutePath, "eng") // Make sure you have traineddata in filesDir/tessdata
-        tessBaseAPI.setImage(bitmap)
-        val extractedText = tessBaseAPI.utF8Text
-        tessBaseAPI.end()
+        try {
+            val tessBaseAPI = TessBaseAPI()
+            val tessDataPath = filesDir.absolutePath  // must contain tessdata/
 
-        Log.d("ScreenCaptureService", "OCR Text: $extractedText")
+            Log.d("OCR", "Files dir: ${filesDir.absolutePath}")
+            Log.d("OCR", "Tessdata exists: ${File(filesDir, "tessdata").exists()}")
+
+            tessBaseAPI.init(tessDataPath, "eng")      // now it will find tessdata/eng.traineddata
+            tessBaseAPI.setImage(bitmap)
+            val extractedText = tessBaseAPI.utF8Text
+            tessBaseAPI.end()
+
+            Log.d("ScreenCaptureService", "OCR Text: $extractedText")
+        } catch (e: Exception) {
+            Log.e("ScreenCaptureService", "OCR error", e)
+        }
     }
 
 
