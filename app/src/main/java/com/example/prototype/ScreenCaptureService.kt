@@ -64,20 +64,18 @@ class ScreenCaptureService : Service() {
     private val captureRunnable = object : Runnable {
         override fun run() {
             if (ScreenState.isFacebookOpen) {
+                Log.d("ScreenCaptureService", "Screenshot capturing")
                 val image = imageReader.acquireLatestImage()
                 if (image != null) {
                     val bitmap = imageToBitmap(image)
                     image.close()
+                    // Run OCR off the main thread
+//                    Thread {
+//                        runOcr(bitmap)
+//                        bitmap.recycle()
+//                    }.start()
 
-                    // Pipe to OCR
-                    runOcr(bitmap)
-                    bitmap.recycle()
-
-                    // Notification
-                    updateNotification("Screenshot captured at ${System.currentTimeMillis()}")
-
-                    // Log to Logcat
-                    Log.d("ScreenCaptureService", "Screenshot captured at ${System.currentTimeMillis()}")
+                    Log.d("ScreenCaptureService", "Screenshot processed")
                 }
             }
             handler.postDelayed(this, 3000)
