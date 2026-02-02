@@ -17,12 +17,21 @@ import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import com.googlecode.tesseract.android.TessBaseAPI
+import java.util.concurrent.atomic.AtomicLong
 
 class ScreenCaptureService : Service() {
 
     private lateinit var projection: MediaProjection
     private lateinit var imageReader: ImageReader
+    private lateinit var ocrModule: OCRModule
+
     private val handler = Handler(Looper.getMainLooper())
+    private val screenshotCounter = AtomicLong(0)
+
+    override fun onCreate() {
+        super.onCreate()
+        ocrModule = OCRModule(applicationContext)
+    }
 
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
         startForeground(1, notification())
@@ -69,13 +78,14 @@ class ScreenCaptureService : Service() {
                 if (image != null) {
                     val bitmap = imageToBitmap(image)
                     image.close()
-                    // Run OCR off the main thread
+                    val screenshotId = screenshotCounter.incrementAndGet()
+                    Log.d("ScreenCaptureService", "Screenshot acquired #$screenshotId")
+
                     Thread {
-                        runOcr(bitmap)
+                        val text = ocrModule.extractText(bitmap)
+                        Log.d("ScreenCaptureService", "OCR text from screenshot #$screenshotId: $text")
                         bitmap.recycle()
                     }.start()
-
-                    Log.d("ScreenCaptureService", "Screenshot processed")
                 }
             }
             handler.postDelayed(this, 3000)
@@ -101,24 +111,25 @@ class ScreenCaptureService : Service() {
     }
 
     // Stub for OCR processing
-    private fun runOcr(bitmap: Bitmap) {
-        try {
-            val tessBaseAPI = TessBaseAPI()
-            val tessDataPath = filesDir.absolutePath  // must contain tessdata/
-
-            Log.d("OCR", "Files dir: ${filesDir.absolutePath}")
-            Log.d("OCR", "Tessdata exists: ${File(filesDir, "tessdata").exists()}")
-
-            tessBaseAPI.init(tessDataPath, "eng")      // now it will find tessdata/eng.traineddata
-            tessBaseAPI.setImage(bitmap)
-            val extractedText = tessBaseAPI.utF8Text
-            tessBaseAPI.end()
-
-            Log.d("ScreenCaptureService", "OCR Text: $extractedText")
-        } catch (e: Exception) {
-            Log.e("ScreenCaptureService", "OCR error", e)
-        }
-    }
+//    private fun runOcr(bitmap: Bitmap) {
+//        try {
+//            val tessBaseAPI = TessBaseAPI()
+//            val tessDataPath = filesDir.absolutePath  // must contain tessdata/
+//
+//            Log.d("OCR", "Files dir: ${filesDir.absolutePath}")
+//            Log.d("OCR", "Tessdata exists: ${File(filesDir, "tessdata").exists()}")
+//
+//            Log.d("OCR","Sending to OCR.")
+//            tessBaseAPI.init(tessDataPath, "eng")      // now it will find tessdata/eng.traineddata
+//            tessBaseAPI.setImage(bitmap)
+//            val extractedText = tessBaseAPI.utF8Text
+//            tessBaseAPI.end()
+//
+//            Log.d("ScreenCaptureService", "OCR Text: $extractedText")
+//        } catch (e: Exception) {
+//            Log.e("ScreenCaptureService", "OCR error", e)
+//        }
+//    }
 
 
     private fun notification(): Notification {
@@ -136,7 +147,7 @@ class ScreenCaptureService : Service() {
 
         return Notification.Builder(this, channelId)
             .setContentTitle("Screen Capture Service")
-            .setContentText("Running in background")
+            .setContentText("Monitoring screen")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
     }
