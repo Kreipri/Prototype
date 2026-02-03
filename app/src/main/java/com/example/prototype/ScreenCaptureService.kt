@@ -26,8 +26,41 @@ class ScreenCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
         startForeground(1, notification())
+
+        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+                as MediaProjectionManager
+
+        projection = mgr.getMediaProjection(
+            intent.getIntExtra("resultCode", Activity.RESULT_CANCELED),
+            intent.getParcelableExtra("data")!!
+        ) ?: return START_NOT_STICKY
+        val resultCode = intent.getIntExtra("resultCode", Activity.RESULT_CANCELED)
+        val resultData = if (Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra("data", Intent::class.java)!!
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra("data")!!
+        }
+
+        projection = mgr.getMediaProjection(resultCode, resultData) ?: return START_NOT_STICKY
+
+        CaptureState.isRunning = true
+
+        // --- ADD THIS BLOCK ---
+        // Notify OverlayService that we are live!
+        sendBroadcast(Intent("com.example.prototype.CAPTURE_STARTED").apply {
+            setPackage(packageName) // Security: keep broadcast within app
+        })
+        // ----------------------
+
         startCapture(intent)
+
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        CaptureState.isRunning = false
+        super.onDestroy()
     }
 
     private fun startCapture(intent: Intent) {
@@ -122,7 +155,7 @@ class ScreenCaptureService : Service() {
 
 
     private fun notification(): Notification {
-        val channelId = "screen_capture"
+        val channelId = "capture"
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -130,26 +163,24 @@ class ScreenCaptureService : Service() {
                 "Screen Capture",
                 NotificationManager.IMPORTANCE_LOW
             )
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(channel)
         }
 
         return Notification.Builder(this, channelId)
-            .setContentTitle("Screen Capture Service")
-            .setContentText("Running in background")
+            .setContentTitle("Monitoring Active")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
-    }
-
-    private fun updateNotification(text: String) {
-        val notification = Notification.Builder(this, "screen_capture")
-            .setContentTitle("Screen Capture Service")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .build()
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(1, notification)
     }
 
     override fun onBind(intent: Intent?) = null
+
+
+    object CaptureState {
+        @Volatile var isRunning: Boolean = false
+    }
+
+
 }
+
+

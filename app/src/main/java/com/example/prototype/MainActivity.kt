@@ -1,77 +1,118 @@
 package com.example.prototype
 
-import android.os.Bundle
-import androidx.activity.enableEdgeToEdge
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import android.app.Activity
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
-import android.util.Log
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
 import android.widget.Button
-import java.io.File
-import java.io.FileOutputStream
-
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var projectionManager: MediaProjectionManager
-    private val REQUEST_CODE_CAPTURE = 1001
+    private lateinit var statusOverlay: TextView
+    private lateinit var statusAccess: TextView
+    private lateinit var statusNotif: TextView
+
+    private val NOTIF_REQ_CODE = 101
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        copyTessData(this)
+        // Initialize UI Views
+        statusOverlay = findViewById(R.id.statusOverlay)
+        statusAccess = findViewById(R.id.statusAccessibility)
+        statusNotif = findViewById(R.id.statusNotification)
 
-        projectionManager =
-            getSystemService(Context.MEDIA_PROJECTION_SERVICE)
-                    as MediaProjectionManager
+        // Button Listeners to open respective settings
+        findViewById<Button>(R.id.btnReqOverlay).setOnClickListener {
+            if (!Settings.canDrawOverlays(this)) {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+        }
 
-        findViewById<Button>(R.id.startBtn).setOnClickListener {
-            startActivityForResult(
-                projectionManager.createScreenCaptureIntent(),
-                REQUEST_CODE_CAPTURE
-            )
+        findViewById<Button>(R.id.btnReqAccess).setOnClickListener {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            startActivity(intent)
+        }
+
+        findViewById<Button>(R.id.btnReqNotif).setOnClickListener {
+            if (Build.VERSION.SDK_INT >= 33) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIF_REQ_CODE)
+            }
         }
     }
 
-    private fun copyTessData(context: Context) {
-        val tessdataDir = File(context.filesDir, "tessdata")
-        if (!tessdataDir.exists()) tessdataDir.mkdirs()
+    override fun onResume() {
+        super.onResume()
+        updateDashboard()
+    }
 
-        val file = File(tessdataDir, "eng.traineddata")
-        if (!file.exists()) {
-            context.assets.open("tessdata/eng.traineddata").use { input ->
-                FileOutputStream(file).use { output ->
-                    input.copyTo(output)
-                }
-            }
-            Log.d("OCR", "Copied eng.traineddata to ${file.absolutePath}")
+    private fun updateDashboard() {
+        // 1. Check Overlay Permission
+        if (Settings.canDrawOverlays(this)) {
+            statusOverlay.text = "Overlay: GRANTED ✅"
+            statusOverlay.setTextColor(getColor(android.R.color.holo_green_dark))
         } else {
-            Log.d("OCR", "Tessdata already exists at ${file.absolutePath}")
+            statusOverlay.text = "Overlay: MISSING ❌"
+            statusOverlay.setTextColor(getColor(android.R.color.holo_red_dark))
+        }
+
+        // 2. Check Accessibility Service
+        if (isAccessibilityServiceEnabled(FacebookAccessibilityService::class.java)) {
+            statusAccess.text = "Accessibility: ACTIVE ✅"
+            statusAccess.setTextColor(getColor(android.R.color.holo_green_dark))
+        } else {
+            statusAccess.text = "Accessibility: INACTIVE ❌"
+            statusAccess.setTextColor(getColor(android.R.color.holo_red_dark))
+        }
+
+        // 3. Check Notification Permission (Android 13+)
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                statusNotif.text = "Notifications: GRANTED ✅"
+                statusNotif.setTextColor(getColor(android.R.color.holo_green_dark))
+            } else {
+                statusNotif.text = "Notifications: MISSING ⚠️"
+                statusNotif.setTextColor(getColor(android.R.color.holo_orange_dark))
+            }
+        } else {
+            statusNotif.text = "Notifications: N/A (Granted) ✅"
         }
     }
 
+    // Helper to check if your specific Accessibility Service is on
+    private fun isAccessibilityServiceEnabled(service: Class<out Any>): Boolean {
+        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
 
-    override fun onActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?
-    ) {
-        super.onActivityResult(requestCode, resultCode, data)
+        val colonSplitter = android.text.TextUtils.SimpleStringSplitter(':')
+        colonSplitter.setString(enabledServices)
 
-        if (requestCode == REQUEST_CODE_CAPTURE &&
-            resultCode == Activity.RESULT_OK &&
-            data != null
-        ) {
-            val intent = Intent(this, ScreenCaptureService::class.java).apply {
-                putExtra("resultCode", resultCode)
-                putExtra("data", data)
+        val myService = ComponentName(packageName, service.name).flattenToString()
+
+        while (colonSplitter.hasNext()) {
+            val componentName = colonSplitter.next()
+            if (componentName.equals(myService, ignoreCase = true)) {
+                return true
             }
-            startForegroundService(intent)
         }
+        return false
+    }
+
+    // Helper for ComponentName
+    private fun ComponentName(pkg: String, cls: String): android.content.ComponentName {
+        return android.content.ComponentName(pkg, cls)
     }
 }
