@@ -14,15 +14,24 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import java.util.concurrent.atomic.AtomicInteger // IMPORT THIS
 import java.io.File
-import java.io.FileOutputStream
 import com.googlecode.tesseract.android.TessBaseAPI
+import android.widget.Toast
 
 class ScreenCaptureService : Service() {
 
     private lateinit var projection: MediaProjection
     private lateinit var imageReader: ImageReader
     private val handler = Handler(Looper.getMainLooper())
+    private val TAG = "ScreenCaptureDebug"
+
+    // --- ATOMIC COUNTERS (Thread Safe) ---
+    // specific types that handle concurrency automatically
+    private val attemptCount = AtomicInteger(0)
+    private val successCaptureCount = AtomicInteger(0)
+    private val ocrFinishedCount = AtomicInteger(0)
+    // -------------------------------------
 
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
         startForeground(1, notification())
@@ -30,31 +39,27 @@ class ScreenCaptureService : Service() {
         val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE)
                 as MediaProjectionManager
 
-        projection = mgr.getMediaProjection(
-            intent.getIntExtra("resultCode", Activity.RESULT_CANCELED),
-            intent.getParcelableExtra("data")!!
-        ) ?: return START_NOT_STICKY
         val resultCode = intent.getIntExtra("resultCode", Activity.RESULT_CANCELED)
-        val resultData = if (Build.VERSION.SDK_INT >= 33) {
-            intent.getParcelableExtra("data", Intent::class.java)!!
+        val data = if (Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra("data", Intent::class.java)
         } else {
             @Suppress("DEPRECATION")
-            intent.getParcelableExtra("data")!!
+            intent.getParcelableExtra("data")
         }
 
-        projection = mgr.getMediaProjection(resultCode, resultData) ?: return START_NOT_STICKY
+        if (data == null) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
+        projection = mgr.getMediaProjection(resultCode, data) ?: return START_NOT_STICKY
         CaptureState.isRunning = true
 
-        // --- ADD THIS BLOCK ---
-        // Notify OverlayService that we are live!
         sendBroadcast(Intent("com.example.prototype.CAPTURE_STARTED").apply {
-            setPackage(packageName) // Security: keep broadcast within app
+            setPackage(packageName)
         })
-        // ----------------------
 
         startCapture(intent)
-
         return START_STICKY
     }
 
@@ -64,21 +69,6 @@ class ScreenCaptureService : Service() {
     }
 
     private fun startCapture(intent: Intent) {
-        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-
-        val dataIntent: Intent = if (Build.VERSION.SDK_INT >= 33) {
-            intent.getParcelableExtra("data", Intent::class.java)!!
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra("data")!!
-        }
-
-        projection = mgr.getMediaProjection(
-            intent.getIntExtra("resultCode", Activity.RESULT_CANCELED),
-            dataIntent
-        ) ?: return
-
-        // Use device screen size dynamically instead of hardcoded
         val width = resources.displayMetrics.widthPixels
         val height = resources.displayMetrics.heightPixels
 
@@ -97,25 +87,33 @@ class ScreenCaptureService : Service() {
     private val captureRunnable = object : Runnable {
         override fun run() {
             if (ScreenState.isFacebookOpen) {
-                Log.d("ScreenCaptureService", "Screenshot capturing")
+                // ATOMIC INCREMENT
+                val currentId = attemptCount.incrementAndGet()
+
+                Log.d(TAG, "--- CYCLE #$currentId STARTED ---")
+
                 val image = imageReader.acquireLatestImage()
+
                 if (image != null) {
+                    successCaptureCount.incrementAndGet()
+
                     val bitmap = imageToBitmap(image)
                     image.close()
-                    // Run OCR off the main thread
+
+                    // Start background thread for OCR
                     Thread {
-                        runOcr(bitmap)
+                        runOcr(bitmap, currentId)
                         bitmap.recycle()
                     }.start()
 
-                    Log.d("ScreenCaptureService", "Screenshot processed")
+                } else {
+                    Log.w(TAG, "Cycle #$currentId: SKIPPED (No new image)")
                 }
             }
             handler.postDelayed(this, 3000)
         }
     }
 
-    // Convert Image to Bitmap
     private fun imageToBitmap(image: Image): Bitmap {
         val plane = image.planes[0]
         val buffer = plane.buffer
@@ -129,44 +127,62 @@ class ScreenCaptureService : Service() {
             Bitmap.Config.ARGB_8888
         )
         bitmap.copyPixelsFromBuffer(buffer)
-
         return Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
     }
 
-    // Stub for OCR processing
-    private fun runOcr(bitmap: Bitmap) {
+    private fun runOcr(bitmap: Bitmap, id: Int) {
         try {
             val tessBaseAPI = TessBaseAPI()
-            val tessDataPath = filesDir.absolutePath  // must contain tessdata/
+            val tessDataPath = filesDir.absolutePath
 
-            Log.d("OCR", "Files dir: ${filesDir.absolutePath}")
-            Log.d("OCR", "Tessdata exists: ${File(filesDir, "tessdata").exists()}")
-
-            tessBaseAPI.init(tessDataPath, "eng")      // now it will find tessdata/eng.traineddata
+            tessBaseAPI.init(tessDataPath, "eng")
             tessBaseAPI.setImage(bitmap)
             val extractedText = tessBaseAPI.utF8Text
             tessBaseAPI.end()
 
-            Log.d("ScreenCaptureService", "OCR Text: $extractedText")
+            val finishedTotal = ocrFinishedCount.incrementAndGet()
+
+            if (extractedText.isNotEmpty()) {
+                // Run Analysis
+                val analysis = TextAnalyzer.analyze(extractedText)
+
+                if (!analysis.isClean) {
+                    // Loop through all found words and save them
+                    for (incident in analysis.incidents) {
+
+                        Log.e(TAG, "🚨 DETECTED: ${incident.word} (${incident.severity})")
+
+                        // SAVE TO STORAGE
+                        IncidentLogger.logIncident(
+                            context = applicationContext,
+                            word = incident.word,
+                            severity = incident.severity,
+                            appName = "Facebook"
+                        )
+                    }
+
+                    // Visual Feedback
+                    val msg = analysis.incidents.joinToString { "${it.word} (${it.severity})" }
+                    handler.post {
+                        Toast.makeText(applicationContext, "⚠️ Logged: $msg", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } else {
+                Log.d(TAG, "Cycle #$id: OCR finished (empty).")
+            }
+
         } catch (e: Exception) {
-            Log.e("ScreenCaptureService", "OCR error", e)
+            Log.e(TAG, "Cycle #$id: OCR FAILED", e)
         }
     }
 
 
     private fun notification(): Notification {
         val channelId = "capture"
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "Screen Capture",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(channel)
+            val channel = NotificationChannel(channelId, "Screen Capture", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
-
         return Notification.Builder(this, channelId)
             .setContentTitle("Monitoring Active")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
@@ -175,12 +191,7 @@ class ScreenCaptureService : Service() {
 
     override fun onBind(intent: Intent?) = null
 
-
     object CaptureState {
         @Volatile var isRunning: Boolean = false
     }
-
-
 }
-
-

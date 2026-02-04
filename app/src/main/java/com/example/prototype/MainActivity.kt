@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -48,6 +49,12 @@ class MainActivity : AppCompatActivity() {
             if (Build.VERSION.SDK_INT >= 33) {
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIF_REQ_CODE)
             }
+        }
+
+        // In MainActivity.kt onCreate
+        findViewById<Button>(R.id.someButton).setOnClickListener {
+            val logs = IncidentLogger.getAllLogs(this)
+            Log.d("SAVED_DATA", logs)
         }
     }
 
