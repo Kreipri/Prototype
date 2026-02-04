@@ -24,6 +24,7 @@ class ScreenCaptureService : Service() {
     private lateinit var projection: MediaProjection
     private lateinit var imageReader: ImageReader
     private lateinit var ocrModule: OCRModule
+    private lateinit var textPreprocessingModule: TextPreprocessingModule
 
     private val handler = Handler(Looper.getMainLooper())
     private val screenshotCounter = AtomicLong(0)
@@ -31,6 +32,7 @@ class ScreenCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         ocrModule = OCRModule(applicationContext)
+        textPreprocessingModule = TextPreprocessingModule()
     }
 
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
@@ -83,7 +85,9 @@ class ScreenCaptureService : Service() {
 
                     Thread {
                         val text = ocrModule.extractText(bitmap)
+                        val preprocessedText = textPreprocessingModule.preprocessText(text)
                         Log.d("ScreenCaptureService", "OCR text from screenshot #$screenshotId: $text")
+                        Log.d("ScreenCaptureService", "Preprocessed text from screenshot #$screenshotId: $preprocessedText")
                         bitmap.recycle()
                     }.start()
                 }
