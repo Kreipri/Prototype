@@ -16,7 +16,7 @@ object IncidentLogger {
 
     // --- NEW: COOLDOWN CONFIGURATION ---
     // If we see the same word again within 5 seconds, ignore it.
-    private const val COOLDOWN_MS = 5000L
+    private const val COOLDOWN_MS = 10000L
 
     // Stores the last time we logged a specific word.
     // Example: {"stupid": 170000500, "idiot": 170000900}
@@ -43,7 +43,20 @@ object IncidentLogger {
         lastLogTimeMap[word] = currentTime
 
         try {
-            // ... (Saving logic remains exactly the same) ...
+            val jsonObject = JSONObject()
+            jsonObject.put("word", word)
+            jsonObject.put("severity", severity)
+            jsonObject.put("app", appName)
+            jsonObject.put("timestamp", currentTime)
+            jsonObject.put("readable_time", getReadableTime())
+
+            val entry = jsonObject.toString() + ",\n"
+
+            val fileOutputStream: FileOutputStream = context.openFileOutput(FILE_NAME, Context.MODE_APPEND)
+            fileOutputStream.write(entry.toByteArray())
+            fileOutputStream.close()
+
+            Log.d("IncidentLogger", "✅ Saved to local storage: $entry")
         } catch (e: Exception) {
             Log.e("IncidentLogger", "Failed to save incident", e)
         }

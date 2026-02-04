@@ -60,13 +60,21 @@ class ScreenCaptureService : Service() {
         })
 
         startCapture(intent)
+
+        // 2. Start the Sync Timer
+        handler.postDelayed(syncRunnable, SYNC_INTERVAL_MS)
+
         return START_STICKY
     }
 
     override fun onDestroy() {
+        // Final sync on close
+        Thread { FirebaseSyncManager.syncPendingLogs(applicationContext) }.start()
+        handler.removeCallbacks(syncRunnable)
         CaptureState.isRunning = false
         super.onDestroy()
     }
+
 
     private fun startCapture(intent: Intent) {
         val width = resources.displayMetrics.widthPixels
@@ -143,28 +151,39 @@ class ScreenCaptureService : Service() {
             val finishedTotal = ocrFinishedCount.incrementAndGet()
 
             if (extractedText.isNotEmpty()) {
-                // Run Analysis
                 val analysis = TextAnalyzer.analyze(extractedText)
 
                 if (!analysis.isClean) {
-                    // Loop through all found words and save them
-                    for (incident in analysis.incidents) {
+                    var triggerEmergencySync = false
 
+                    for (incident in analysis.incidents) {
                         Log.e(TAG, "🚨 DETECTED: ${incident.word} (${incident.severity})")
 
-                        // SAVE TO STORAGE
+                        // Save to local file first
                         IncidentLogger.logIncident(
-                            context = applicationContext,
-                            word = incident.word,
-                            severity = incident.severity,
-                            appName = "Facebook"
+                            applicationContext,
+                            incident.word,
+                            incident.severity,
+                            "Facebook"
                         )
+
+                        // 2. CHECK FOR HIGH SEVERITY
+                        if (incident.severity == "HIGH") {
+                            triggerEmergencySync = true
+                        }
                     }
 
-                    // Visual Feedback
-                    val msg = analysis.incidents.joinToString { "${it.word} (${it.severity})" }
-                    handler.post {
-                        Toast.makeText(applicationContext, "⚠️ Logged: $msg", Toast.LENGTH_LONG).show()
+                    // 3. IMMEDIATE UPLOAD LOGIC
+                    if (triggerEmergencySync) {
+                        Log.w(TAG, "🔥 HIGH SEVERITY DETECTED! Initiating Emergency Upload...")
+                        handler.post {
+                            Toast.makeText(applicationContext, "⚠️ Critical Alert: Uploading...", Toast.LENGTH_SHORT).show()
+                        }
+
+                        // Run sync immediately on background thread
+                        Thread {
+                            FirebaseSyncManager.syncPendingLogs(applicationContext)
+                        }.start()
                     }
                 }
             } else {
@@ -191,6 +210,24 @@ class ScreenCaptureService : Service() {
 
     override fun onBind(intent: Intent?) = null
 
+    // In ScreenCaptureService.kt
+
+    // NEW CONSTANT: 8 Hours in milliseconds
+    // Formula: 8 hours * 60 mins * 60 secs * 1000 ms
+    private val SYNC_INTERVAL_MS = 28_800_000L
+
+    //The Periodic Sync Runnable (Runs every 8 hours)
+    private val syncRunnable = object : Runnable {
+        override fun run() {
+            Log.d(TAG, "⏰ Scheduled Sync (3x Daily) starting...")
+            Thread {
+                FirebaseSyncManager.syncPendingLogs(applicationContext)
+            }.start()
+
+            // Reschedule for next 8 hours
+            handler.postDelayed(this, SYNC_INTERVAL_MS)
+        }
+    }
     object CaptureState {
         @Volatile var isRunning: Boolean = false
     }

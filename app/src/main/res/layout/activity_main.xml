@@ -60,7 +60,14 @@
         android:layout_marginBottom="24dp"/>
 
     <Button
-        android:id="@+id/someButton"
+        android:id="@+id/conLogBtn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Console Logs"
+        android:layout_marginBottom="24dp"/>
+
+    <Button
+        android:id="@+id/logBtn"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="View Logs"
