@@ -17,16 +17,17 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Prototype">
-        <activity
-            android:name=".MainActivity"
+        <activity android:name=".MainActivity" android:exported="false" />
+        <activity android:name=".CapturePermissionActivity" />
+        <activity android:name=".WelcomeActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".CapturePermissionActivity" />
+
+        <activity android:name=".ParentActivity" android:exported="false" />
 
         <service
             android:name=".ScreenCaptureService"

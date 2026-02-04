@@ -34,10 +34,13 @@ object FirebaseSyncManager {
         // Structure: Collection "DailyReports" -> Document "Session_ID"
         val db = FirebaseFirestore.getInstance()
 
+        val prefs = context.getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
+        val myDeviceId = prefs.getString("device_id", "unknown_device") ?: "unknown_device"
+
         val sessionData = hashMapOf(
             "uploaded_at" to System.currentTimeMillis(),
-            "device_id" to "child_device_01", // You can make this dynamic
-            "incidents" to newLogs // This sends the entire list as one array
+            "device_id" to myDeviceId, // <--- NOW DYNAMIC
+            "incidents" to newLogs
         )
 
         // 3. THE ONE WRITE OPERATION
