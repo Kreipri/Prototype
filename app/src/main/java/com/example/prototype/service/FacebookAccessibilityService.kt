@@ -1,4 +1,4 @@
-package com.example.prototype
+package com.example.prototype.service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent

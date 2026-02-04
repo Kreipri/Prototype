@@ -1,6 +1,5 @@
-package com.example.prototype
+package com.example.prototype.ui.child
 
-import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
@@ -10,6 +9,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import com.example.prototype.data.remote.FirebaseSyncManager
+import com.example.prototype.R
+import com.example.prototype.ui.welcome.WelcomeActivity
 
 class MainActivity : AppCompatActivity() {
 
@@ -28,7 +30,7 @@ class MainActivity : AppCompatActivity() {
         txtLogs = findViewById(R.id.txtChildLogs)
 
         // 2. Load & Display Device ID
-        val prefs = getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("AppConfig", MODE_PRIVATE)
         val myId = prefs.getString("device_id", "ERROR") ?: "ERROR"
         txtDeviceId.text = myId
 

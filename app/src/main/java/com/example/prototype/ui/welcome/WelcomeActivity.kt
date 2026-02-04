@@ -1,17 +1,19 @@
-package com.example.prototype
+package com.example.prototype.ui.welcome
 
-import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
 import androidx.appcompat.app.AppCompatActivity
+import com.example.prototype.R
+import com.example.prototype.ui.child.MainActivity
+import com.example.prototype.ui.parent.ParentActivity
 
 class WelcomeActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         // 1. Auto-Login Check
-        val prefs = getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("AppConfig", MODE_PRIVATE)
         val role = prefs.getString("role", null)
 
         if (role == "CHILD") {
@@ -28,7 +30,7 @@ class WelcomeActivity : AppCompatActivity() {
         setContentView(R.layout.activity_welcome)
 
         findViewById<Button>(R.id.btnRoleChild).setOnClickListener {
-            val prefs = getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
+            val prefs = getSharedPreferences("AppConfig", MODE_PRIVATE)
 
             // 1. Check if we already have an ID from before
             var myId = prefs.getString("device_id", null)

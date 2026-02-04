@@ -1,7 +1,7 @@
-package com.example.prototype
+package com.example.prototype.service
 
+import android.R
 import android.app.*
-import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
@@ -15,9 +15,12 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import java.util.concurrent.atomic.AtomicInteger // IMPORT THIS
-import java.io.File
 import com.googlecode.tesseract.android.TessBaseAPI
-import android.widget.Toast
+import com.example.prototype.data.remote.FirebaseSyncManager
+import com.example.prototype.domain.TextAnalyzer
+import com.example.prototype.data.IncidentRepository
+import com.example.prototype.data.model.Incident
+
 
 class ScreenCaptureService : Service() {
 
@@ -36,7 +39,7 @@ class ScreenCaptureService : Service() {
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
         startForeground(1, notification())
 
-        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+        val mgr = getSystemService(MEDIA_PROJECTION_SERVICE)
                 as MediaProjectionManager
 
         val resultCode = intent.getIntExtra("resultCode", Activity.RESULT_CANCELED)
@@ -140,13 +143,24 @@ class ScreenCaptureService : Service() {
 
     private fun runOcr(bitmap: Bitmap, id: Int) {
         try {
+            // 1. OPTIMIZATION: Downscale to 50%
+            // We use 'bitmap' here to refer to the parameter above
+            val width = bitmap.width / 2
+            val height = bitmap.height / 2
+            val scaledBitmap = Bitmap.createScaledBitmap(bitmap, width, height, false)
+
+            // 2. Initialize Tesseract
             val tessBaseAPI = TessBaseAPI()
             val tessDataPath = filesDir.absolutePath
-
             tessBaseAPI.init(tessDataPath, "eng")
-            tessBaseAPI.setImage(bitmap)
+
+            // Use the smaller 'scaledBitmap' for OCR
+            tessBaseAPI.setImage(scaledBitmap)
             val extractedText = tessBaseAPI.utF8Text
             tessBaseAPI.end()
+
+            // Clean up the scaled bitmap (The original is recycled by the caller)
+            scaledBitmap.recycle()
 
             val finishedTotal = ocrFinishedCount.incrementAndGet()
 
@@ -154,36 +168,17 @@ class ScreenCaptureService : Service() {
                 val analysis = TextAnalyzer.analyze(extractedText)
 
                 if (!analysis.isClean) {
-                    var triggerEmergencySync = false
+                    for (violation in analysis.incidents) {
+                        Log.e(TAG, "🚨 DETECTED: ${violation.word} (${violation.severity})")
 
-                    for (incident in analysis.incidents) {
-                        Log.e(TAG, "🚨 DETECTED: ${incident.word} (${incident.severity})")
-
-                        // Save to local file first
-                        IncidentLogger.logIncident(
-                            applicationContext,
-                            incident.word,
-                            incident.severity,
-                            "Facebook"
+                        val incident = Incident(
+                            word = violation.word,
+                            severity = violation.severity,
+                            appName = "Facebook"
                         )
 
-                        // 2. CHECK FOR HIGH SEVERITY
-                        if (incident.severity == "HIGH") {
-                            triggerEmergencySync = true
-                        }
-                    }
-
-                    // 3. IMMEDIATE UPLOAD LOGIC
-                    if (triggerEmergencySync) {
-                        Log.w(TAG, "🔥 HIGH SEVERITY DETECTED! Initiating Emergency Upload...")
-                        handler.post {
-                            Toast.makeText(applicationContext, "⚠️ Critical Alert: Uploading...", Toast.LENGTH_SHORT).show()
-                        }
-
-                        // Run sync immediately on background thread
-                        Thread {
-                            FirebaseSyncManager.syncPendingLogs(applicationContext)
-                        }.start()
+                        // Pass to Repository
+                        IncidentRepository.saveIncident(applicationContext, incident)
                     }
                 }
             } else {
@@ -204,7 +199,7 @@ class ScreenCaptureService : Service() {
         }
         return Notification.Builder(this, channelId)
             .setContentTitle("Monitoring Active")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setSmallIcon(R.drawable.ic_menu_camera)
             .build()
     }
 

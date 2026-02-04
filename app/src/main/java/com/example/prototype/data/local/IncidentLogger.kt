@@ -1,4 +1,4 @@
-package com.example.prototype
+package com.example.prototype.data.local
 
 import android.content.Context
 import android.util.Log

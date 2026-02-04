@@ -1,4 +1,4 @@
-package com.example.prototype
+package com.example.prototype.service
 
 import android.app.Service
 import android.content.BroadcastReceiver
@@ -15,6 +15,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import com.example.prototype.R
+import com.example.prototype.ui.child.CapturePermissionActivity
 
 class OverlayService : Service() {
 
@@ -40,7 +42,7 @@ class OverlayService : Service() {
 
         val filter = IntentFilter("com.example.prototype.CAPTURE_STARTED")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val exportFlag = if (Build.VERSION.SDK_INT >= 33) Context.RECEIVER_NOT_EXPORTED else 0
+            val exportFlag = if (Build.VERSION.SDK_INT >= 33) RECEIVER_NOT_EXPORTED else 0
             registerReceiver(captureStartReceiver, filter, exportFlag)
         } else {
             registerReceiver(captureStartReceiver, filter)

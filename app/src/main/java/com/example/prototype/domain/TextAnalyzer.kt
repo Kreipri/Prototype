@@ -1,6 +1,5 @@
-package com.example.prototype
+package com.example.prototype.domain
 
-import android.util.Log
 import java.util.Locale
 
 object TextAnalyzer {

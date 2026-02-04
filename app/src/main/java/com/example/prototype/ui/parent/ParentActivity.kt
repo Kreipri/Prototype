@@ -1,4 +1,4 @@
-package com.example.prototype
+package com.example.prototype.ui.parent // <--- Note the new package!
 
 import android.content.Context
 import android.content.Intent
@@ -7,11 +7,15 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.TextView
-import android.widget.Toast
-import androidx.appcompat.app.AlertDialog // Use AndroidX AlertDialog
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import com.example.prototype.R
+import com.example.prototype.ui.welcome.WelcomeActivity // Import your WelcomeActivity
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class ParentActivity : AppCompatActivity() {
 
@@ -20,8 +24,6 @@ class ParentActivity : AppCompatActivity() {
     // UI References
     private lateinit var txtLogs: TextView
     private lateinit var txtStatus: TextView
-
-    // Stats UI References
     private lateinit var txtHigh: TextView
     private lateinit var txtMed: TextView
     private lateinit var txtLow: TextView
@@ -33,14 +35,12 @@ class ParentActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_parent)
 
-        // 1. Bind Views (Matching the XML IDs)
+        // 1. Bind Views
         txtLogs = findViewById(R.id.txtParentLogs)
         txtStatus = findViewById(R.id.txtTargetId)
-
         txtHigh = findViewById(R.id.txtHighCount)
         txtMed = findViewById(R.id.txtMedCount)
         txtLow = findViewById(R.id.txtLowCount)
-
         progressHigh = findViewById(R.id.progressHigh)
         progressMed = findViewById(R.id.progressMed)
         progressLow = findViewById(R.id.progressLow)
@@ -50,44 +50,36 @@ class ParentActivity : AppCompatActivity() {
 
         txtStatus.text = targetId
 
-        // 2. Linking Button Logic
+        // 2. Link Button
         findViewById<Button>(R.id.btnLinkChild).setOnClickListener {
             val input = EditText(this)
             input.hint = "Enter Child ID"
-
             AlertDialog.Builder(this)
                 .setTitle("Link Device")
                 .setView(input)
-                .setPositiveButton("Save") { _, _ -> // Explicitly ignore arguments
+                .setPositiveButton("Save") { _, _ ->
                     val newId = input.text.toString().trim()
                     if (newId.isNotEmpty()) {
                         prefs.edit().putString("target_id", newId).apply()
                         targetId = newId
                         txtStatus.text = newId
-                        fetchLogs(newId) // Refresh immediately
+                        fetchLogs(newId)
                     }
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
         }
 
-        // 3. Refresh & Logout Buttons
-        findViewById<Button>(R.id.btnRefresh).setOnClickListener {
-            fetchLogs(targetId)
-        }
+        // 3. Refresh & Logout
+        findViewById<Button>(R.id.btnRefresh).setOnClickListener { fetchLogs(targetId) }
 
         findViewById<Button>(R.id.btnLogoutParent).setOnClickListener {
-            // ✅ NEW: Wipes only the role, keeps the "target_id" you linked to
-            getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
-                .edit()
-                .remove("role")
-                .apply()
-
+            // Only remove role, keep the target_id for convenience
+            prefs.edit().remove("role").apply()
             startActivity(Intent(this, WelcomeActivity::class.java))
             finish()
         }
 
-        // 4. Initial Load
         fetchLogs(targetId)
     }
 
@@ -99,13 +91,17 @@ class ParentActivity : AppCompatActivity() {
 
         txtLogs.text = "Fetching data..."
 
+        // --- NEW SUB-COLLECTION QUERY ---
         db.collection("monitor_sessions")
-            .whereEqualTo("device_id", targetId)
-            .limit(20)
+            .document(targetId)
+            .collection("logs") // <--- Going into the folder
+            .orderBy("timestamp", Query.Direction.DESCENDING) // Sort by newest
+            .limit(50)
             .get()
             .addOnSuccessListener { documents ->
                 if (documents.isEmpty) {
                     txtLogs.text = "No logs found for ID: $targetId"
+                    updateGraphs(0, 0, 0)
                     return@addOnSuccessListener
                 }
 
@@ -113,35 +109,28 @@ class ParentActivity : AppCompatActivity() {
                 var high = 0
                 var med = 0
                 var low = 0
+                val sdf = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
 
                 for (doc in documents) {
-                    val time = doc.get("uploaded_at")
+                    // Extract data fields
+                    val word = doc.getString("word") ?: "?"
+                    val severity = doc.getString("severity") ?: "LOW"
+                    val app = doc.getString("app") ?: "Unknown"
+                    val ts = doc.getLong("timestamp") ?: 0L
 
-                    // Safe Cast to List of Maps
-                    val incidents = doc.get("incidents") as? List<Map<String, Any>>
+                    val dateStr = sdf.format(Date(ts))
 
-                    if (incidents != null) {
-                        for (incident in incidents) {
-                            val sev = incident["severity"] as? String ?: "LOW"
-                            val word = incident["word"] as? String ?: "?"
-
-                            // Count stats
-                            when (sev) {
-                                "HIGH" -> high++
-                                "MEDIUM" -> med++
-                                "LOW" -> low++
-                            }
-
-                            sb.append("[$sev] Found '$word' on ${incident["app"]}\n")
-                        }
-                        sb.append("--- Uploaded: $time ---\n\n")
+                    // Stats
+                    when (severity) {
+                        "HIGH" -> high++
+                        "MEDIUM" -> med++
+                        "LOW" -> low++
                     }
+
+                    sb.append("[$dateStr] $severity: '$word' in $app\n")
                 }
 
-                // Update Logs Text
                 txtLogs.text = sb.toString()
-
-                // Update Dashboard Graphs
                 updateGraphs(high, med, low)
             }
             .addOnFailureListener { e ->
@@ -151,25 +140,21 @@ class ParentActivity : AppCompatActivity() {
 
     private fun updateGraphs(high: Int, med: Int, low: Int) {
         val total = high + med + low
-
-        // Prevent divide by zero error
         if (total == 0) {
             progressHigh.progress = 0
             progressMed.progress = 0
             progressLow.progress = 0
-            txtHigh.text = "0 events"
-            txtMed.text = "0 events"
-            txtLow.text = "0 events"
+            txtHigh.text = "0"
+            txtMed.text = "0"
+            txtLow.text = "0"
             return
         }
-
-        // Calculate Percentages
         progressHigh.progress = (high * 100) / total
         progressMed.progress = (med * 100) / total
         progressLow.progress = (low * 100) / total
 
-        txtHigh.text = "$high events"
-        txtMed.text = "$med events"
-        txtLow.text = "$low events"
+        txtHigh.text = "$high"
+        txtMed.text = "$med"
+        txtLow.text = "$low"
     }
 }

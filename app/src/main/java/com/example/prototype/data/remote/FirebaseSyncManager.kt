@@ -1,13 +1,10 @@
-package com.example.prototype
+package com.example.prototype.data.remote // <--- Note the new package!
 
 import android.content.Context
 import android.util.Log
 import com.google.firebase.firestore.FirebaseFirestore
 import org.json.JSONObject
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 object FirebaseSyncManager {
 
@@ -24,32 +21,41 @@ object FirebaseSyncManager {
         val newLogs = allLogs.filter { it.timestamp > lastSyncTime }
 
         if (newLogs.isEmpty()) {
-            Log.d(TAG, "☁️ Nothing to sync. (0 Writes used)")
+            Log.d(TAG, "☁️ Nothing to sync.")
             return
         }
 
-        Log.d(TAG, "☁️ Found ${newLogs.size} new incidents. Batching upload...")
+        Log.d(TAG, "☁️ Found ${newLogs.size} new incidents. Saving to Sub-Collection...")
 
-        // 2. BATCH UPLOAD: Create ONE document containing all these logs
-        // Structure: Collection "DailyReports" -> Document "Session_ID"
         val db = FirebaseFirestore.getInstance()
-
         val prefs = context.getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
         val myDeviceId = prefs.getString("device_id", "unknown_device") ?: "unknown_device"
 
-        val sessionData = hashMapOf(
-            "uploaded_at" to System.currentTimeMillis(),
-            "device_id" to myDeviceId, // <--- NOW DYNAMIC
-            "incidents" to newLogs
-        )
+        // 2. TARGET: monitor_sessions/{DEVICE_ID}/logs/
+        val userDocRef = db.collection("monitor_sessions").document(myDeviceId)
 
-        // 3. THE ONE WRITE OPERATION
-        db.collection("monitor_sessions")
-            .add(sessionData)
+        // Use a BATCH write for safety (All or Nothing)
+        val batch = db.batch()
+
+        for (log in newLogs) {
+            // Create a new document ID automatically for each log
+            val newLogRef = userDocRef.collection("logs").document()
+
+            val logData = hashMapOf(
+                "word" to log.word,
+                "severity" to log.severity,
+                "app" to log.app,
+                "timestamp" to log.timestamp
+            )
+
+            batch.set(newLogRef, logData)
+        }
+
+        // 3. COMMIT THE BATCH
+        batch.commit()
             .addOnSuccessListener {
-                Log.d(TAG, "✅ Batch Upload Success! Saved ${newLogs.size} logs in 1 write.")
-
-                // Save the new "High Score" (timestamp) so we don't upload these again
+                Log.d(TAG, "✅ Sync Success! Saved ${newLogs.size} logs.")
+                // Update the "High Score" timestamp
                 saveLastSyncTime(context, System.currentTimeMillis())
             }
             .addOnFailureListener { e ->
@@ -67,22 +73,12 @@ object FirebaseSyncManager {
 
     private fun readLocalLogs(context: Context): List<LogEntry> {
         val entries = mutableListOf<LogEntry>()
-        val file = File(context.filesDir, "incidents_log.json") // Must match IncidentLogger filename
+        val file = File(context.filesDir, "incidents_log.json")
         if (!file.exists()) return entries
 
         try {
-            // The file is a list of JSON objects separated by newlines/commas
-            // We need to parse it manually since it's "pseudo-json"
-            val content = file.readText()
-            // Wrap in brackets to make it a valid JSON array for parsing
-            val jsonArrayString = "[$content]"
-                .replace(",\n]", "]") // Fix trailing comma if exists
-                .replace(",]", "]")   // Extra safety
-
-            // Note: If your logger writes line-by-line, parsing line-by-line is safer:
             file.readLines().forEach { line ->
                 if (line.trim().isNotEmpty()) {
-                    // Remove trailing comma
                     val cleanLine = line.trim().removeSuffix(",")
                     try {
                         val obj = JSONObject(cleanLine)
@@ -101,7 +97,7 @@ object FirebaseSyncManager {
         return entries
     }
 
-    // --- Helper: Shared Preferences for Last Sync Time ---
+    // --- Helper: Shared Preferences ---
     private fun getLastSyncTime(context: Context): Long {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return prefs.getLong(KEY_LAST_SYNC, 0L)

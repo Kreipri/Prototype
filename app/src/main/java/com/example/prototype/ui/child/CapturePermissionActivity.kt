@@ -1,10 +1,10 @@
-package com.example.prototype
+package com.example.prototype.ui.child
 
 import android.app.Activity
-import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import com.example.prototype.service.ScreenCaptureService
 
 
 class CapturePermissionActivity : Activity() {
@@ -16,7 +16,7 @@ class CapturePermissionActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         projectionManager =
-            getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+            getSystemService(MEDIA_PROJECTION_SERVICE)
                     as MediaProjectionManager
 
         startActivityForResult(

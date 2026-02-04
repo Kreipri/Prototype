@@ -17,9 +17,9 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Prototype">
-        <activity android:name=".MainActivity" android:exported="false" />
-        <activity android:name=".CapturePermissionActivity" />
-        <activity android:name=".WelcomeActivity"
+        <activity android:name=".ui.child.MainActivity" android:exported="false" />
+        <activity android:name=".ui.child.CapturePermissionActivity" />
+        <activity android:name=".ui.welcome.WelcomeActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -27,18 +27,18 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".ParentActivity" android:exported="false" />
+        <activity android:name=".ui.parent.ParentActivity" android:exported="false" />
 
         <service
-            android:name=".ScreenCaptureService"
+            android:name=".service.ScreenCaptureService"
             android:foregroundServiceType="mediaProjection"
             android:exported="false"/>
         <service
-            android:name=".OverlayService"
+            android:name=".service.OverlayService"
             android:exported="false" />
 
         <service
-            android:name=".FacebookAccessibilityService"
+            android:name=".service.FacebookAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true">
             <intent-filter>
