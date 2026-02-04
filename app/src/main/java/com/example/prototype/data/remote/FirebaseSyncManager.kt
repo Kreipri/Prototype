@@ -1,69 +1,91 @@
-package com.example.prototype.data.remote // <--- Note the new package!
+package com.example.prototype.data.remote
 
 import android.content.Context
 import android.util.Log
 import com.google.firebase.firestore.FirebaseFirestore
 import org.json.JSONObject
 import java.io.File
+import androidx.core.content.edit
 
+/**
+ * Handles synchronization between Local Storage and Firebase Firestore.
+ *
+ * Logic:
+ * 1. Reads local logs.
+ * 2. Filters out logs that have already been uploaded (using 'last_sync_time').
+ * 3. Batches new logs into a Firestore Sub-collection.
+ */
 object FirebaseSyncManager {
 
+    // --- CONSTANTS ---
     private const val TAG = "FirebaseSync"
     private const val PREFS_NAME = "SyncPrefs"
     private const val KEY_LAST_SYNC = "last_sync_time"
+    private const val KEY_DEVICE_ID = "device_id"
+    private const val COLLECTION_SESSIONS = "monitor_sessions"
+    private const val SUBCOL_LOGS = "logs"
 
-    // 1. Upload logs that happened AFTER the last sync
+    // --- PUBLIC API ---
+
     fun syncPendingLogs(context: Context) {
         val lastSyncTime = getLastSyncTime(context)
-        val allLogs = readLocalLogs(context)
+        val allLogs = parseLocalLogs(context)
 
-        // FILTER: Only get logs that are newer than our last upload
+        // Filter: Keep only logs newer than the last successful sync
         val newLogs = allLogs.filter { it.timestamp > lastSyncTime }
 
         if (newLogs.isEmpty()) {
-            Log.d(TAG, "☁️ Nothing to sync.")
+            Log.d(TAG, "☁️ Sync skipped: No new logs.")
             return
         }
 
-        Log.d(TAG, "☁️ Found ${newLogs.size} new incidents. Saving to Sub-Collection...")
+        Log.d(TAG, "☁️ Syncing ${newLogs.size} incidents to Cloud...")
+        uploadBatch(context, newLogs)
+    }
 
+    // --- PRIVATE HELPERS ---
+
+    private fun uploadBatch(context: Context, logs: List<LogEntry>) {
         val db = FirebaseFirestore.getInstance()
-        val prefs = context.getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
-        val myDeviceId = prefs.getString("device_id", "unknown_device") ?: "unknown_device"
+        val deviceId = getDeviceId(context)
 
-        // 2. TARGET: monitor_sessions/{DEVICE_ID}/logs/
-        val userDocRef = db.collection("monitor_sessions").document(myDeviceId)
-
-        // Use a BATCH write for safety (All or Nothing)
+        // Reference: monitor_sessions/{DEVICE_ID}
+        val userDocRef = db.collection(COLLECTION_SESSIONS).document(deviceId)
         val batch = db.batch()
 
-        for (log in newLogs) {
-            // Create a new document ID automatically for each log
-            val newLogRef = userDocRef.collection("logs").document()
+        // Create a new document in the "logs" sub-collection for each incident
+        for (log in logs) {
+            val newDocRef = userDocRef.collection(SUBCOL_LOGS).document()
 
-            val logData = hashMapOf(
+            val dataMap = hashMapOf(
                 "word" to log.word,
                 "severity" to log.severity,
                 "app" to log.app,
                 "timestamp" to log.timestamp
             )
 
-            batch.set(newLogRef, logData)
+            batch.set(newDocRef, dataMap)
         }
 
-        // 3. COMMIT THE BATCH
+        // Commit all writes at once (Atomic Operation)
         batch.commit()
             .addOnSuccessListener {
-                Log.d(TAG, "✅ Sync Success! Saved ${newLogs.size} logs.")
-                // Update the "High Score" timestamp
+                Log.d(TAG, "✅ Cloud Sync Complete!")
+                // Update the checkpoint so we don't re-upload these
                 saveLastSyncTime(context, System.currentTimeMillis())
             }
             .addOnFailureListener { e ->
-                Log.e(TAG, "❌ Upload Failed", e)
+                Log.e(TAG, "❌ Cloud Sync Failed", e)
             }
     }
 
-    // --- Helper: Read and Parse Local JSON ---
+    private fun getDeviceId(context: Context): String {
+        return context.getSharedPreferences("AppConfig", Context.MODE_PRIVATE)
+            .getString(KEY_DEVICE_ID, "unknown_device") ?: "unknown_device"
+    }
+
+    // --- FILE PARSING ---
+
     data class LogEntry(
         val word: String,
         val severity: String,
@@ -71,24 +93,26 @@ object FirebaseSyncManager {
         val timestamp: Long
     )
 
-    private fun readLocalLogs(context: Context): List<LogEntry> {
+    private fun parseLocalLogs(context: Context): List<LogEntry> {
         val entries = mutableListOf<LogEntry>()
         val file = File(context.filesDir, "incidents_log.json")
         if (!file.exists()) return entries
 
         try {
             file.readLines().forEach { line ->
-                if (line.trim().isNotEmpty()) {
-                    val cleanLine = line.trim().removeSuffix(",")
+                val trimmed = line.trim().removeSuffix(",")
+                if (trimmed.isNotEmpty()) {
                     try {
-                        val obj = JSONObject(cleanLine)
+                        val obj = JSONObject(trimmed)
                         entries.add(LogEntry(
                             word = obj.getString("word"),
                             severity = obj.getString("severity"),
                             app = obj.getString("app"),
-                            timestamp = obj.getLong("timestamp")
+                            timestamp = obj.optLong("timestamp", 0L)
                         ))
-                    } catch (e: Exception) { /* Ignore bad lines */ }
+                    } catch (e: Exception) {
+                        // Skip corrupted lines
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -97,14 +121,17 @@ object FirebaseSyncManager {
         return entries
     }
 
-    // --- Helper: Shared Preferences ---
+    // --- PREFERENCES MANAGEMENT ---
+
     private fun getLastSyncTime(context: Context): Long {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getLong(KEY_LAST_SYNC, 0L)
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(KEY_LAST_SYNC, 0L)
     }
 
     private fun saveLastSyncTime(context: Context, time: Long) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putLong(KEY_LAST_SYNC, time).apply()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit {
+                putLong(KEY_LAST_SYNC, time)
+            }
     }
 }

@@ -5,68 +5,65 @@ import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
+/**
+ * Monitors app state to detect when Facebook is launched.
+ * Coordinates with OverlayState to manage debounced triggers.
+ */
 class FacebookAccessibilityService : AccessibilityService() {
 
-    private var lastFbEventTime = 0L
-    private val TAG = "FacebookAccessDebug"
-
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        Log.d(TAG, "Accessibility Service CONNECTED and READY.")
+    companion object {
+        private const val TAG = "FbAccessibility"
+        private const val FB_PACKAGE_KEY = "facebook"
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val pkg = event?.packageName?.toString()
+        val packageName = event?.packageName?.toString() ?: return
 
-        // Log every event package to ensure we are receiving them
-        // Log.v(TAG, "Event from package: $pkg")
-
-        if (pkg != null && pkg.contains("facebook")) {
-            Log.d(TAG, "DETECTED FACEBOOK! Package: $pkg")
-
-            lastFbEventTime = System.currentTimeMillis()
-            ScreenState.isFacebookOpen = true
-
-            if (OverlayState.canTrigger()) {
-                Log.d(TAG, "Triggering OverlayService...")
-                try {
-                    val intent = Intent(applicationContext, OverlayService::class.java)
-                    startService(intent)
-                    OverlayState.isVisible = true
-                    Log.d(TAG, "startService(OverlayService) called successfully.")
-                } catch (e: Exception) {
-                    Log.e(TAG, "FAILED to start OverlayService", e)
-                }
-            } else {
-                Log.d(TAG, "Overlay trigger debounced (waiting/already visible).")
-            }
-
-        } else if (System.currentTimeMillis() - lastFbEventTime > 2000) {
-            if (ScreenState.isFacebookOpen) {
-                Log.d(TAG, "Facebook closed (timeout).")
-                ScreenState.isFacebookOpen = false
-            }
+        if (packageName.contains(FB_PACKAGE_KEY)) {
+            handleFacebookDetected()
+        } else {
+            handleAppSwitch()
         }
     }
 
-    override fun onInterrupt() {
-        Log.w(TAG, "Service Interrupted")
+    private fun handleFacebookDetected() {
+        ScreenState.isFacebookOpen = true
+
+        if (OverlayState.canTrigger()) {
+            val intent = Intent(this, OverlayService::class.java)
+            startService(intent)
+            OverlayState.isVisible = true
+            Log.d(TAG, "Overlay triggered for Facebook.")
+        }
+    }
+
+    private fun handleAppSwitch() {
+        // Optional: Logic to handle when user leaves Facebook
+        ScreenState.isFacebookOpen = false
+    }
+
+    override fun onInterrupt() {}
+
+    // --- STATE MANAGEMENT ---
+
+    object ScreenState {
+        @Volatile var isFacebookOpen = false
+    }
+
+    object OverlayState {
+        @Volatile var isVisible = false
+        private var lastTriggerTime = 0L
+        private const val DEBOUNCE_MS = 1000L
+
+        fun canTrigger(): Boolean {
+            val now = System.currentTimeMillis()
+            val hasWaitPeriodPassed = (now - lastTriggerTime) > DEBOUNCE_MS
+
+            if (!isVisible && hasWaitPeriodPassed) {
+                lastTriggerTime = now
+                return true
+            }
+            return false
+        }
     }
 }
-
-object ScreenState {
-    @Volatile var isFacebookOpen = false
-}
-
-object OverlayState {
-    @Volatile var isVisible = false
-    private var lastTriggerTime = 0L
-    private const val DEBOUNCE_MS = 500L
-
-    fun canTrigger(): Boolean {
-        val now = System.currentTimeMillis()
-        return !isVisible && now - lastTriggerTime > DEBOUNCE_MS
-            .also { lastTriggerTime = now }
-    }
-}
-

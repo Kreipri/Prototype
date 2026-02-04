@@ -1,8 +1,6 @@
 package com.example.prototype.ui.child
 
-import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
@@ -13,6 +11,8 @@ import androidx.appcompat.app.AppCompatActivity
 import com.example.prototype.R
 import com.example.prototype.data.remote.FirebaseSyncManager
 import com.example.prototype.ui.welcome.RoleSelectionActivity
+import androidx.core.content.edit
+import androidx.core.graphics.toColorInt
 
 /**
  * Dashboard for the CHILD role.
@@ -61,7 +61,7 @@ class ChildDashboardActivity : AppCompatActivity() {
     }
 
     private fun setupDashboardInfo() {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val myId = prefs.getString(KEY_DEVICE_ID, "ERROR") ?: "ERROR"
         txtDeviceId.text = myId
     }
@@ -105,12 +105,12 @@ class ChildDashboardActivity : AppCompatActivity() {
     }
 
     private fun performLogout() {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
         // LOGOUT LOGIC:
         // We remove 'role' so the Welcome Screen appears again.
         // We KEEP 'device_id' so the child doesn't get a new ID every time they restart.
-        prefs.edit().remove(KEY_ROLE).apply()
+        prefs.edit { remove(KEY_ROLE) }
 
         startActivity(Intent(this, RoleSelectionActivity::class.java))
         finish()
@@ -133,15 +133,15 @@ class ChildDashboardActivity : AppCompatActivity() {
     private fun updateStatusUI(isActive: Boolean) {
         if (isActive) {
             txtStatus.text = "🟢 Active (Monitoring...)"
-            txtStatus.setBackgroundColor(Color.parseColor("#E8F5E9")) // Light Green
-            txtStatus.setTextColor(Color.parseColor("#2E7D32"))     // Dark Green
+            txtStatus.setBackgroundColor("#E8F5E9".toColorInt()) // Light Green
+            txtStatus.setTextColor("#2E7D32".toColorInt())     // Dark Green
 
             // Remove click listener if fixed
             txtStatus.setOnClickListener(null)
         } else {
             txtStatus.text = "🔴 Permissions Missing (Tap to Fix)"
-            txtStatus.setBackgroundColor(Color.parseColor("#FFEBEE")) // Light Red
-            txtStatus.setTextColor(Color.parseColor("#D32F2F"))     // Dark Red
+            txtStatus.setBackgroundColor("#FFEBEE".toColorInt()) // Light Red
+            txtStatus.setTextColor("#D32F2F".toColorInt())     // Dark Red
 
             // Add "Fix It" Action
             txtStatus.setOnClickListener {
