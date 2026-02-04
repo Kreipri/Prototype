@@ -2,7 +2,7 @@ package com.example.prototype.domain
 
 import java.util.Locale
 
-object TextAnalyzer {
+object ContentAnalyzer {
 
     private const val TAG = "TextAnalyzer"
 

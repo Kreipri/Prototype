@@ -10,7 +10,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
-object IncidentLogger {
+object LocalStorageManager {
 
     private const val FILE_NAME = "incidents_log.json"
 

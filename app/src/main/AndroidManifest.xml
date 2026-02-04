@@ -17,9 +17,9 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Prototype">
-        <activity android:name=".ui.child.MainActivity" android:exported="false" />
+        <activity android:name=".ui.child.ChildDashboardActivity" android:exported="false" />
         <activity android:name=".ui.child.CapturePermissionActivity" />
-        <activity android:name=".ui.welcome.WelcomeActivity"
+        <activity android:name=".ui.welcome.RoleSelectionActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -27,7 +27,7 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".ui.parent.ParentActivity" android:exported="false" />
+        <activity android:name=".ui.parent.ParentDashboardActivity" android:exported="false" />
 
         <service
             android:name=".service.ScreenCaptureService"

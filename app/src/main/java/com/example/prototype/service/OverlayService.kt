@@ -78,7 +78,7 @@ class OverlayService : Service() {
         }
 
         try {
-            blockerView = LayoutInflater.from(this).inflate(R.layout.overlay_blocker, null)
+            blockerView = LayoutInflater.from(this).inflate(R.layout.service_overlay_blocker, null)
 
             blockerView!!.findViewById<Button>(R.id.enableBtn).setOnClickListener {
                 sendBroadcast(Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS))
