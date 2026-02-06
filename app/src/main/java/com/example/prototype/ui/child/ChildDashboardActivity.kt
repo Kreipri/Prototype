@@ -1,22 +1,25 @@
 package com.example.prototype.ui.child
 
-import android.content.Intent
+// --- ANDROID & CORE ---
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.*
+import android.net.ConnectivityManager
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
-import android.widget.Button
-import android.widget.TextView
-import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
-import com.example.prototype.R
-import com.example.prototype.data.remote.FirebaseSyncManager
-import com.example.prototype.ui.welcome.RoleSelectionActivity
+import android.view.accessibility.AccessibilityManager
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
-import androidx.core.graphics.toColorInt
 
 // --- JETPACK COMPOSE UI ---
+import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.*
 
 // --- COMPOSE MATERIAL & ICONS ---
@@ -24,260 +27,447 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 
-// --- COMPOSE RUNTIME & TOOLS ---
+// --- COMPOSE RUNTIME ---
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.*
 
-/**
- * Dashboard for the CHILD role.
- *
- * Responsibilities:
- * 1. Displaying the unique Device ID (for pairing).
- * 2. Checking/Requesting critical permissions (Overlay, etc.).
- * 3. Providing Debug controls (Force Upload, Reset).
- */
-class ChildDashboardActivity : AppCompatActivity() {
+// --- PROJECT SPECIFIC ---
+import com.example.prototype.data.remote.FirebaseSyncManager
+import com.example.prototype.service.FacebookAccessibilityService
+import com.example.prototype.ui.theme.AppTheme
+import com.example.prototype.ui.welcome.RoleSelectionActivity
+import com.google.firebase.FirebaseApp
+import com.example.prototype.service.ScreenCaptureService
 
-    // --- CONSTANTS ---
-    companion object {
-        private const val PREFS_NAME = "AppConfig"
-        private const val KEY_DEVICE_ID = "device_id"
-        private const val KEY_ROLE = "role"
+// --- UTILS ---
+import java.text.SimpleDateFormat
+import java.util.*
+import kotlin.system.exitProcess
+
+class ChildDashboardActivity : ComponentActivity() {
+
+    // --- STATE MANAGEMENT ---
+    private var deviceId = mutableStateOf("...")
+    private var consoleLogs = mutableStateListOf<String>()
+
+    // Permission & Health States
+    private var isAccessibilityOn = mutableStateOf(false)
+    private var isNotificationOn = mutableStateOf(false)
+    private var isOverlayOn = mutableStateOf(false)
+    private var isInternetOn = mutableStateOf(false)
+    private var isFirebaseReady = mutableStateOf(false)
+    private var isScreenCaptureActive = mutableStateOf(false)
+
+    private val consoleReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val message = intent?.getStringExtra("message") ?: return
+            addToConsole(message)
+        }
     }
-
-    // --- UI COMPONENTS ---
-    private lateinit var txtDeviceId: TextView
-    private lateinit var txtStatus: TextView
-    private lateinit var txtLogs: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_child_dashboard)
+        val filter = IntentFilter("com.example.prototype.CONSOLE_UPDATE")
+        registerReceiver(consoleReceiver, filter, RECEIVER_NOT_EXPORTED)
+        loadDeviceInfo()
+        performHealthCheck()
+        addToConsole("System Initialized.")
 
-        initializeViews()
-        setupDashboardInfo()
-        setupClickListeners()
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
 
-        // Initial Permission Check
-        checkPermissions()
+        setContent {
+            MaterialTheme {
+                // UI State for Dialogs
+                var showEditDialog by remember { mutableStateOf(false) }
+
+                // Monitor Facebook status in real-time
+                val fbStatus = ScreenCaptureService.ScreenState.isFacebookOpen
+                LaunchedEffect(fbStatus) {
+                    addToConsole(if (fbStatus) "App Event: Facebook OPENED" else "App Event: Facebook CLOSED")
+                }
+
+                // Check system requirements
+                val allChecksOk = isAccessibilityOn.value && isNotificationOn.value &&
+                        isOverlayOn.value && isInternetOn.value &&
+                        isFirebaseReady.value && isScreenCaptureActive.value
+
+                ChildDashboardScreen(
+                    deviceId = deviceId.value,
+                    consoleLogs = consoleLogs,
+                    isReady = allChecksOk,
+                    checks = mapOf(
+                        "Accessibility" to isAccessibilityOn.value,
+                        "Notifications" to isNotificationOn.value,
+                        "Overlay" to isOverlayOn.value,
+                        "Internet" to isInternetOn.value,
+                        "Firebase" to isFirebaseReady.value,
+                        "Capture" to isScreenCaptureActive.value
+                    ),
+                    onFixPermission = { label -> navigateToSetting(label) },
+                    onForceSync = { triggerSync() },
+                    onLogout = { performLogout() },
+                    onExit = { killApp() },
+                    onEditIdClick = { showEditDialog = true } // 🟢 Open Edit Dialog
+                )
+
+                // 🟢 EDIT ID DIALOG
+                if (showEditDialog) {
+                    EditDeviceIdDialog(
+                        currentId = deviceId.value,
+                        onDismiss = { showEditDialog = false },
+                        onConfirm = { newId ->
+                            saveNewDeviceId(newId)
+                            showEditDialog = false
+                        }
+                    )
+                }
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        // Re-check permissions every time the app comes into focus
-        checkPermissions()
+        performHealthCheck()
     }
 
-    private fun initializeViews() {
-        txtDeviceId = findViewById(R.id.txtChildDeviceId)
-        txtStatus = findViewById(R.id.txtPermissionStatus)
-        txtLogs = findViewById(R.id.txtChildLogs)
+    override fun onDestroy() {
+        // 🟢 3. Unregister to prevent memory leaks
+        unregisterReceiver(consoleReceiver)
+        super.onDestroy()
     }
 
-    private fun setupDashboardInfo() {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val myId = prefs.getString(KEY_DEVICE_ID, "ERROR") ?: "ERROR"
-        txtDeviceId.text = myId
+    // --- LOGIC ---
+
+    private fun loadDeviceInfo() {
+        val prefs = getSharedPreferences("AppConfig", MODE_PRIVATE)
+        // If ID is missing, set a default, but don't generate one here to avoid overwrites
+        deviceId.value = prefs.getString("device_id", "NOT_SET") ?: "NOT_SET"
     }
 
-    private fun setupClickListeners() {
-        // 1. Show Pairing Code Dialog
-        findViewById<Button>(R.id.btnTestLinkChild).setOnClickListener {
-            showPairingDialog()
+    private fun saveNewDeviceId(newId: String) {
+        if (newId.isBlank()) return
+        getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
+            putString("device_id", newId)
         }
-
-        // 2. Debug: Force Cloud Upload
-        findViewById<Button>(R.id.btnForceUpload).setOnClickListener {
-            triggerManualSync()
-        }
-
-        // 3. Placeholder: Settings
-        findViewById<Button>(R.id.btnSettings).setOnClickListener {
-            Toast.makeText(this, "Settings feature pending...", Toast.LENGTH_SHORT).show()
-        }
-
-        // 4. Logout / Reset
-        findViewById<Button>(R.id.btnLogoutChild).setOnClickListener {
-            performLogout()
-        }
+        deviceId.value = newId
+        addToConsole("Configuration: Device ID changed to '$newId'")
     }
 
-    private fun showPairingDialog() {
-        val currentId = txtDeviceId.text.toString()
+    private fun performHealthCheck() {
+        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        isAccessibilityOn.value = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .any { it.resolveInfo.serviceInfo.packageName == packageName }
 
-        AlertDialog.Builder(this)
-            .setTitle("Pairing Code")
-            .setMessage("Enter this code on the Parent Device:\n\n$currentId")
-            .setPositiveButton("OK", null)
-            .show()
+        isNotificationOn.value = NotificationManagerCompat.from(this).areNotificationsEnabled()
+        isOverlayOn.value = Settings.canDrawOverlays(this)
+
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        isInternetOn.value = cm.activeNetworkInfo?.isConnected == true
+        isFirebaseReady.value = FirebaseApp.getApps(this).isNotEmpty()
+        isScreenCaptureActive.value = ScreenCaptureService.CaptureState.isRunning
     }
 
-    private fun triggerManualSync() {
+    private fun navigateToSetting(label: String) {
+        val intent = when (label) {
+            "Accessibility" -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            "Notifications" -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            }
+            "Overlay" -> Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+            else -> null
+        }
+        intent?.let { startActivity(it) }
+    }
+
+    private fun triggerSync() {
         FirebaseSyncManager.syncPendingLogs(this)
-        Toast.makeText(this, "Manual Sync Triggered", Toast.LENGTH_SHORT).show()
-        appendLogToUI("Manual upload request sent.")
+        addToConsole("Sync Event: Cloud synchronization completed.")
     }
+
+    private fun addToConsole(message: String) {
+        val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        consoleLogs.add(0, "[$timestamp] $message")
+
+        // Keep only the last 50 logs to save memory
+        if (consoleLogs.size > 50) consoleLogs.removeAt(50)
+    }
+
 
     private fun performLogout() {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-
-        // LOGOUT LOGIC:
-        // We remove 'role' so the Welcome Screen appears again.
-        // We KEEP 'device_id' so the child doesn't get a new ID every time they restart.
-        prefs.edit { remove(KEY_ROLE) }
-
+        // 🟢 LOGIC: Only remove the 'role', keep 'device_id' so it persists!
+        getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
+            remove("role")
+            // We intentionally do NOT remove "device_id" here.
+        }
         startActivity(Intent(this, RoleSelectionActivity::class.java))
         finish()
     }
 
-    /**
-     * Checks if the app has the necessary Android permissions.
-     * Updates the Status UI accordingly.
-     */
-    private fun checkPermissions() {
-        // 1. Check "Draw Over Other Apps" (Required for VirtualDisplay capture)
-        if (Settings.canDrawOverlays(this)) {
-            updateStatusUI(isActive = true)
-            // Note: Service start logic would go here in production
-        } else {
-            updateStatusUI(isActive = false)
-        }
-    }
-
-    private fun updateStatusUI(isActive: Boolean) {
-        if (isActive) {
-            txtStatus.text = "🟢 Active (Monitoring...)"
-            txtStatus.setBackgroundColor("#E8F5E9".toColorInt()) // Light Green
-            txtStatus.setTextColor("#2E7D32".toColorInt())     // Dark Green
-
-            // Remove click listener if fixed
-            txtStatus.setOnClickListener(null)
-        } else {
-            txtStatus.text = "🔴 Permissions Missing (Tap to Fix)"
-            txtStatus.setBackgroundColor("#FFEBEE".toColorInt()) // Light Red
-            txtStatus.setTextColor("#D32F2F".toColorInt())     // Dark Red
-
-            // Add "Fix It" Action
-            txtStatus.setOnClickListener {
-                Toast.makeText(this, "Please allow 'Display over other apps'", Toast.LENGTH_LONG).show()
-                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
-            }
-        }
-    }
-
-    /**
-     * Helper to append debug messages to the on-screen log view.
-     */
-    private fun appendLogToUI(message: String) {
-        val currentText = txtLogs.text.toString()
-        val newText = "• $message\n$currentText"
-        txtLogs.text = newText
+    private fun killApp() {
+        finishAffinity()
+        exitProcess(0)
     }
 }
 
-// --- COMPOSABLE ---
+// --- MAIN SCREEN ---
+
 @Composable
 fun ChildDashboardScreen(
     deviceId: String,
-    permissionStatus: String,
-    logs: String,
-    onForceUpload: () -> Unit,
-    onLogout: () -> Unit
+    consoleLogs: List<String>,
+    isReady: Boolean,
+    checks: Map<String, Boolean>,
+    onFixPermission: (String) -> Unit,
+    onForceSync: () -> Unit,
+    onLogout: () -> Unit,
+    onExit: () -> Unit,
+    onEditIdClick: () -> Unit // 🟢 New Callback
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF5F5F5))
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp)
-    ) {
-        Text("Child Device", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Pairing Code Section
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
-            shape = RoundedCornerShape(8.dp)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("DEVICE ID (Pairing Code)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
-                Text(deviceId, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // System Status
-        StatusSection(label = "System Status", statusText = permissionStatus)
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Live Logs Console
-        Text("Live Logs", fontWeight = FontWeight.Bold)
-        Box(
+    Scaffold(
+        containerColor = AppTheme.Background,
+        bottomBar = { StickyExitButton(onExit) }
+    ) { padding ->
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 120.dp)
-                .background(Color.White, RoundedCornerShape(4.dp))
-                .border(1.dp, Color.LightGray)
-                .padding(12.dp)
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(AppTheme.PaddingDefault),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(logs, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            Text("Child Dashboard", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+
+            // Status Section
+            ReadyBanner(visible = isReady)
+            ChildHeader(deviceId, onEditIdClick) // 🟢 Pass click handler
+
+            // Connected Devices
+            ConnectedDevicesCard()
+
+            // Health & Activity
+            HealthCheckSection(checks, onFixPermission)
+            ActivityConsole(consoleLogs)
+
+            // Bottom Actions
+            ActionRow(onForceSync, onLogout)
+            Spacer(Modifier.height(24.dp))
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(24.dp))
+// --- COMPONENT FUNCTIONS ---
 
-        // Actions
-        Button(onClick = onForceUpload, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
-            Text("Force Cloud Upload")
-        }
-
-        Button(
-            onClick = onLogout,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
-            shape = RoundedCornerShape(8.dp)
+@Composable
+fun ReadyBanner(visible: Boolean) {
+    AnimatedVisibility(visible = visible) {
+        Surface(
+            color = Color(0xFFE8F5E9),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, AppTheme.Success, RoundedCornerShape(12.dp))
         ) {
-            Text("Log Out / Reset")
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.CheckCircle, null, tint = AppTheme.Success)
+                Spacer(Modifier.width(12.dp))
+                Text("Ready for monitoring", fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+            }
         }
     }
 }
 
 @Composable
-fun StatusSection(label: String, statusText: String) {
-    val isWarning = statusText.contains("Missing", ignoreCase = true)
-    Text(label, fontWeight = FontWeight.Bold)
-    Text(
-        text = statusText,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .background(if (isWarning) Color(0xFFFFEBEE) else Color(0xFFE8F5E9))
-            .padding(12.dp),
-        color = if (isWarning) Color(0xFFD32F2F) else Color(0xFF2E7D32)
+fun ChildHeader(deviceId: String, onEditClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppTheme.CardCorner),
+        colors = CardDefaults.cardColors(containerColor = AppTheme.Surface)
+    ) {
+        Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(Color.LightGray)) {
+                Icon(Icons.Default.Face, null, Modifier.align(Alignment.Center))
+            }
+            Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
+                Text("My Device ID", fontSize = 11.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                // 🟢 Header Text
+                Text(deviceId, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+            }
+            // 🟢 Edit Button
+            IconButton(onClick = onEditClick) {
+                Icon(Icons.Default.Edit, "Edit ID", tint = AppTheme.Primary)
+            }
+        }
+    }
+}
+
+@Composable
+fun ConnectedDevicesCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = AppTheme.Surface)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Connected to:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Icon(Icons.Default.CheckCircle, null, tint = AppTheme.Success, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Parent Device (Active)", fontSize = 14.sp)
+            }
+            Button(
+                onClick = { /* Pair logic */ },
+                modifier = Modifier.padding(top = 12.dp).fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = AppTheme.Background, contentColor = Color.Black),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Link New Device", fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun HealthCheckSection(checks: Map<String, Boolean>, onFix: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("System Health", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            checks.forEach { (label, isOk) ->
+                CompactHealthBadge(label, isOk, onClick = { if (!isOk) onFix(label) })
+            }
+        }
+    }
+}
+
+@Composable
+fun CompactHealthBadge(label: String, isOk: Boolean, onClick: () -> Unit) {
+    Surface(
+        color = if (isOk) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.clickable { onClick() }
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = if (isOk) Icons.Default.CheckCircle else Icons.Default.Warning,
+                contentDescription = null,
+                tint = if (isOk) AppTheme.Success else AppTheme.Error,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (isOk) Color(0xFF2E7D32) else Color(0xFFD32F2F))
+        }
+    }
+}
+
+@Composable
+fun ActivityConsole(logs: List<String>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Activity Console", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Card(
+            modifier = Modifier.fillMaxWidth().height(180.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, AppTheme.Border),
+            colors = CardDefaults.cardColors(containerColor = AppTheme.Surface.copy(alpha = 0.9f))
+        ) {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+                items(logs) { log ->
+                    Text(
+                        text = log,
+                        color = if (log.contains("Event")) AppTheme.Primary else Color.DarkGray,
+                        fontSize = 11.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ActionRow(onForceSync: () -> Unit, onLogout: () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onForceSync, Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
+            Text("Sync Now")
+        }
+        OutlinedButton(onClick = onLogout, Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
+            Text("Log Out")
+        }
+    }
+}
+
+@Composable
+fun StickyExitButton(onExit: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = AppTheme.Background.copy(alpha = 0.95f),
+        shadowElevation = 8.dp
+    ) {
+        Button(
+            onClick = onExit,
+            modifier = Modifier.padding(16.dp).fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = AppTheme.Error),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Default.ExitToApp, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Deactivate & Exit App", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+// 🟢 NEW DIALOG FOR EDITING ID
+@Composable
+fun EditDeviceIdDialog(currentId: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var text by remember { mutableStateOf(currentId) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Change Device ID") },
+        text = {
+            Column {
+                Text("Enter a unique name or code for this device:", fontSize = 13.sp, color = Color.Gray)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    label = { Text("Device ID") }
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(text) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
     )
 }
 
-// --- PREVIEW ---
+// --- PREVIEWS ---
+
 @Preview(showBackground = true, showSystemUi = true)
 @Composable
 fun ChildDashboardPreview() {
     MaterialTheme {
         ChildDashboardScreen(
             deviceId = "A7-9B2-C4",
-            permissionStatus = "🔴 Permissions Missing",
-            logs = "Monitoring started...\nCaptured: 'scam'\nUploading to cloud...",
-            onForceUpload = {},
-            onLogout = {}
+            consoleLogs = listOf("[10:00:01] App Event: Facebook OPENED"),
+            isReady = false,
+            checks = mapOf("Accessibility" to true, "Notifications" to true),
+            onFixPermission = {},
+            onForceSync = {},
+            onLogout = {},
+            onExit = {},
+            onEditIdClick = {}
         )
     }
 }

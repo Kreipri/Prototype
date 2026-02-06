@@ -1,49 +1,46 @@
 package com.example.prototype.ui.child
 
-import android.app.Activity
+// --- ANDROID & CORE ---
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.widget.Toast
+
+// --- JETPACK COMPOSE & ACTIVITY SUPPORT ---
+import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+
+// --- SERVICE ---
 import com.example.prototype.service.ScreenCaptureService
 
 /**
- * A transparent activity responsible for launching the system-level
- * Screen Capture permission request.
+ * CapturePermissionActivity:
+ * A transparent bridge activity used to launch the system's screen capture permission dialog.
+ * This is necessary because the MediaProjection permission request must be launched
+ * from an Activity context, even if the result is intended for a background Service.
  */
-class CapturePermissionActivity : Activity() {
-
-    companion object {
-        private const val REQUEST_CODE_CAPTURE = 1001
-    }
-
-    private lateinit var projectionManager: MediaProjectionManager
+class CapturePermissionActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
-        // Launch the system dialog
-        startActivityForResult(
-            projectionManager.createScreenCaptureIntent(),
-            REQUEST_CODE_CAPTURE
-        )
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == REQUEST_CODE_CAPTURE && resultCode == RESULT_OK && data != null) {
-            // Permission granted: Pass data to the Foreground Service
-            val intent = Intent(this, ScreenCaptureService::class.java).apply {
-                putExtra("resultCode", resultCode)
-                putExtra("data", data)
+        val captureLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            if (result.resultCode == RESULT_OK && result.data != null) {
+                // 1. Start the Service with permission data
+                val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
+                    putExtra("resultCode", result.resultCode)
+                    putExtra("data", result.data)
+                }
+                startForegroundService(serviceIntent)
             }
-            startForegroundService(intent)
+            // 3. Close this bridge activity
+            finish()
         }
 
-        // Always finish so the activity doesn't stay in the backstack
-        finish()
+        captureLauncher.launch(projectionManager.createScreenCaptureIntent())
     }
 }

@@ -1,10 +1,12 @@
 package com.example.prototype.ui.parent
 
 // --- ANDROID & CORE ---
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.appcompat.app.AppCompatDelegate
 
 // --- JETPACK COMPOSE UI ---
 import androidx.compose.foundation.*
@@ -31,47 +33,68 @@ import androidx.compose.ui.unit.*
 import com.example.prototype.data.remote.FirebaseSyncManager
 import com.google.firebase.firestore.*
 
+// --- PROJECT SPECIFIC ---
+import com.example.prototype.ui.theme.AppTheme
+import com.example.prototype.ui.welcome.RoleSelectionActivity // Or LoginActivity if you created it
+
 // --- UTILS ---
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.core.content.edit
 
 /**
  * ParentDashboardActivity: Main entry point for the Parent View.
- * Displays real-time monitoring stats and logs fetched from Firestore.
  */
 class ParentDashboardActivity : ComponentActivity() {
     private val db = FirebaseFirestore.getInstance()
 
-    // Observable states: Changing these values automatically triggers UI recomposition
+    // --- STATE MANAGEMENT ---
     private var incidentList = mutableStateListOf<FirebaseSyncManager.LogEntry>()
     private var currentTargetId = mutableStateOf("NOT_LINKED")
     private var isRefreshing = mutableStateOf(false)
 
+    // --- LIFECYCLE ---
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         loadSavedTargetId()
         refreshDashboard()
 
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+
         setContent {
             MaterialTheme {
-                // Local UI state for showing/hiding the pairing dialog
-                var showDialog by remember { mutableStateOf(false) }
+                // UI States for Dialogs
+                var showLinkDialog by remember { mutableStateOf(false) }
+                var showLogoutDialog by remember { mutableStateOf(false) }
 
                 ParentDashboardScreen(
                     targetId = currentTargetId.value,
                     incidents = incidentList,
                     refreshing = isRefreshing.value,
                     onRefresh = { refreshDashboard() },
-                    onSettingsClick = { showDialog = true }
+                    onHeaderSettingsClick = { showLinkDialog = true }, // Gear icon in header
+                    onBottomNavSettingsClick = { showLogoutDialog = true } // Settings in Bottom Nav
                 )
 
-                if (showDialog) {
+                // Dialog 1: Link Device
+                if (showLinkDialog) {
                     LinkDeviceDialog(
-                        onDismiss = { showDialog = false },
+                        onDismiss = { showLinkDialog = false },
                         onConfirm = { newId ->
                             updateTargetId(newId)
-                            showDialog = false
+                            showLinkDialog = false
+                        }
+                    )
+                }
+
+                // Dialog 2: Logout / Settings Menu
+                if (showLogoutDialog) {
+                    LogoutDialog(
+                        onDismiss = { showLogoutDialog = false },
+                        onLogout = {
+                            showLogoutDialog = false
+                            performLogout()
                         }
                     )
                 }
@@ -79,24 +102,21 @@ class ParentDashboardActivity : ComponentActivity() {
         }
     }
 
-    /** * Loads the paired child device ID from SharedPreferences
-     */
+    // --- DATA LOGIC ---
+
     private fun loadSavedTargetId() {
         val prefs = getSharedPreferences("AppConfig", MODE_PRIVATE)
         currentTargetId.value = prefs.getString("target_id", "NOT_LINKED") ?: "NOT_LINKED"
     }
 
-    /** * Updates the target ID in local storage and refreshes the data
-     */
     private fun updateTargetId(newId: String) {
-        getSharedPreferences("AppConfig", MODE_PRIVATE).edit()
-            .putString("target_id", newId).apply()
+        getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
+            putString("target_id", newId)
+        }
         currentTargetId.value = newId
         refreshDashboard()
     }
 
-    /** * Fetches the latest 50 logs from Firestore for the currently linked child device
-     */
     private fun refreshDashboard() {
         if (currentTargetId.value == "NOT_LINKED") return
 
@@ -104,7 +124,7 @@ class ParentDashboardActivity : ComponentActivity() {
         db.collection("monitor_sessions").document(currentTargetId.value).collection("logs")
             .orderBy("timestamp", Query.Direction.DESCENDING).limit(50).get()
             .addOnSuccessListener { documents ->
-                incidentList.clear() // Clear previous state to populate new data
+                incidentList.clear()
                 for (doc in documents) {
                     incidentList.add(FirebaseSyncManager.LogEntry(
                         word = doc.getString("word") ?: "?",
@@ -120,47 +140,50 @@ class ParentDashboardActivity : ComponentActivity() {
                 Toast.makeText(this, "Error: ${it.message}", Toast.LENGTH_SHORT).show()
             }
     }
+
+    private fun performLogout() {
+        // Clear all session data
+        getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
+            clear() // Removes role, target_id, is_logged_in, etc.
+        }
+
+        // Redirect to Entry Point (RoleSelection or Login)
+        val intent = Intent(this, RoleSelectionActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK // Clear back stack
+        startActivity(intent)
+        finish()
+    }
 }
 
-// --- GLOBAL UI DESIGN CONSTANTS ---
-object Variables {
-    val BackgroundDefaultDefault: Color = Color(0xFFFFFFFF)
-    val BorderDefaultDefault: Color = Color(0xFFD9D9D9)
-    val StrokeBorder: Dp = 1.dp
-    val Space600: Dp = 24.dp
-    val columnGap: Dp = 16.dp
-}
+// --- COMPOSE UI SCREENS ---
 
-// --- COMPOSABLE UI SCREENS ---
-
-/**
- * Main Layout Structure using a Scaffold for Bottom Navigation
- */
 @Composable
 fun ParentDashboardScreen(
     targetId: String,
     incidents: List<FirebaseSyncManager.LogEntry>,
     refreshing: Boolean,
     onRefresh: () -> Unit,
-    onSettingsClick: () -> Unit
+    onHeaderSettingsClick: () -> Unit,
+    onBottomNavSettingsClick: () -> Unit
 ) {
     Scaffold(
-        bottomBar = { ParentBottomNavigation() },
-        containerColor = Color(0xFFF0F7FF)
+        bottomBar = { ParentBottomNavigation(onSettingsClick = onBottomNavSettingsClick) },
+        containerColor = AppTheme.Background,
+        contentColor = Color.Black
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+                .padding(AppTheme.PaddingDefault),
+            verticalArrangement = Arrangement.spacedBy(AppTheme.PaddingDefault)
         ) {
-            // Header: Child Info & Settings Toggle
+            // 1. Profile Header
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
+                shape = RoundedCornerShape(AppTheme.CardCorner),
+                colors = CardDefaults.cardColors(containerColor = AppTheme.Surface)
             ) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(Color.LightGray)) {
@@ -168,21 +191,22 @@ fun ParentDashboardScreen(
                     }
                     Column(modifier = Modifier.padding(start = 16.dp).weight(1f)) {
                         Text(targetId, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("Status: Active", color = Color(0xFF4CAF50), fontSize = 12.sp)
+                        Text("Status: Active", color = AppTheme.Success, fontSize = 12.sp)
                     }
-                    IconButton(onClick = onSettingsClick) { Icon(Icons.Default.Settings, "Settings") }
+                    // Gear icon for Linking (Header)
+                    IconButton(onClick = onHeaderSettingsClick) { Icon(Icons.Default.Link, "Link Device") }
                 }
             }
 
-            // Stats: Circular Progress and Severity Breakdown
+            // 2. Statistics Card
             StatsCard(incidents)
 
-            // Log Section: Date-grouped tables
+            // 3. Log Section
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(width = 1.dp, color = Color(0xFFD9D9D9), shape = RoundedCornerShape(12.dp))
-                    .background(color = Color.White, shape = RoundedCornerShape(12.dp))
+                    .border(width = 1.dp, color = AppTheme.Border, shape = RoundedCornerShape(12.dp))
+                    .background(color = AppTheme.Surface, shape = RoundedCornerShape(12.dp))
                     .padding(16.dp)
             ) {
                 Text("Recent Logs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -205,67 +229,16 @@ fun ParentDashboardScreen(
     }
 }
 
-/**
- * Summary Card displaying a Risk Score and linear progress for Low/Med/High counts
- */
-@Composable
-fun StatsCard(incidents: List<FirebaseSyncManager.LogEntry>) {
-    val high = incidents.count { it.severity == "HIGH" }
-    val med = incidents.count { it.severity == "MEDIUM" }
-    val low = incidents.count { it.severity == "LOW" }
-    val total = incidents.size.coerceAtLeast(1)
+// --- REUSABLE COMPONENTS ---
 
-    // Risk score focuses on High and Medium incidents
-    val riskScore = (high + med).toFloat() / total
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        border = BorderStroke(1.dp, Color(0xFFE0E0E0)),
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
-    ) {
-        Row(modifier = Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(
-                    progress = { riskScore },
-                    modifier = Modifier.size(90.dp),
-                    strokeWidth = 8.dp,
-                    color = if (riskScore > 0.5f) Color.Red else Color.Green,
-                    trackColor = Color(0xFFE0E0E0)
-                )
-                Text("${(riskScore * 100).toInt()}%", fontWeight = FontWeight.Bold)
-            }
-            Column(modifier = Modifier.padding(start = 20.dp).weight(1f)) {
-                SeverityBar("Low", low.toFloat() / total, Color(0xFF4CAF50))
-                SeverityBar("Med", med.toFloat() / total, Color(0xFFFFA000))
-                SeverityBar("High", high.toFloat() / total, Color(0xFFD32F2F))
-            }
-        }
-    }
-}
-
-@Composable
-fun SeverityBar(label: String, progress: Float, color: Color) {
-    Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    LinearProgressIndicator(
-        progress = { progress },
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).height(6.dp).clip(CircleShape),
-        color = color,
-        trackColor = Color(0xFFF0F0F0)
-    )
-}
-
-/**
- * Groups logs by date and displays them in separate cards
- */
 @Composable
 fun LogTable(incidents: List<FirebaseSyncManager.LogEntry>) {
-    val groupedIncidents = incidents.groupBy {
+    val grouped = incidents.groupBy {
         SimpleDateFormat("MMMM d, yyyy", Locale.getDefault()).format(Date(it.timestamp)).uppercase()
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        groupedIncidents.forEach { (date, logsForDate) ->
+        grouped.forEach { (date, logs) ->
             Text(
                 text = date,
                 modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
@@ -276,15 +249,15 @@ fun LogTable(incidents: List<FirebaseSyncManager.LogEntry>) {
 
             Card(
                 shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, Color(0xFFE0E0E0)),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, AppTheme.Border),
+                colors = CardDefaults.cardColors(containerColor = AppTheme.Surface),
                 modifier = Modifier.padding(bottom = 16.dp)
             ) {
                 Column {
                     TableHeader()
-                    logsForDate.forEach { incident ->
+                    logs.forEach { incident ->
                         LogItem(incident)
-                        if (incident != logsForDate.last()) {
+                        if (incident != logs.last()) {
                             HorizontalDivider(color = Color(0xFFEEEEEE), thickness = 0.5.dp)
                         }
                     }
@@ -294,9 +267,6 @@ fun LogTable(incidents: List<FirebaseSyncManager.LogEntry>) {
     }
 }
 
-/**
- * Aligns labels using Weights to ensure they match LogItem rows
- */
 @Composable
 fun TableHeader() {
     Row(
@@ -304,7 +274,7 @@ fun TableHeader() {
             .fillMaxWidth()
             .background(Color(0xFFF8F9FA))
             .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(Variables.columnGap),
+        horizontalArrangement = Arrangement.spacedBy(AppTheme.ColumnGap),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text("Severity", Modifier.weight(0.8f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -318,7 +288,7 @@ fun TableHeader() {
 fun LogItem(incident: FirebaseSyncManager.LogEntry) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(Variables.columnGap),
+        horizontalArrangement = Arrangement.spacedBy(AppTheme.ColumnGap),
         verticalAlignment = Alignment.CenterVertically
     ) {
         SeverityBadge(severity = incident.severity, modifier = Modifier.weight(0.8f))
@@ -330,29 +300,88 @@ fun LogItem(incident: FirebaseSyncManager.LogEntry) {
     }
 }
 
-/**
- * Pill-style badge for Severity text with custom background/content colors
- */
+@Composable
+fun StatsCard(incidents: List<FirebaseSyncManager.LogEntry>) {
+    val high = incidents.count { it.severity == "HIGH" }
+    val med = incidents.count { it.severity == "MEDIUM" }
+    val low = incidents.count { it.severity == "LOW" }
+    val total = incidents.size.coerceAtLeast(1)
+    val riskScore = (high + med).toFloat() / total
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        border = BorderStroke(1.dp, Color(0xFFE0E0E0)),
+        shape = RoundedCornerShape(AppTheme.CardCorner),
+        colors = CardDefaults.cardColors(containerColor = AppTheme.Surface)
+    ) {
+        Row(modifier = Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    progress = { riskScore },
+                    modifier = Modifier.size(90.dp),
+                    strokeWidth = 8.dp,
+                    color = if (riskScore > 0.5f) AppTheme.Error else AppTheme.Success,
+                    trackColor = Color(0xFFE0E0E0)
+                )
+                Text("${(riskScore * 100).toInt()}%", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+            Column(modifier = Modifier.padding(start = 20.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SeverityBar("Low", low.toFloat() / total, AppTheme.Success)
+                SeverityBar("Med", med.toFloat() / total, AppTheme.Warning)
+                SeverityBar("High", high.toFloat() / total, AppTheme.Error)
+            }
+        }
+    }
+}
+
+@Composable
+fun SeverityBar(label: String, progress: Float, color: Color) {
+    Column {
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+            color = color,
+            trackColor = Color(0xFFF0F0F0)
+        )
+    }
+}
+
 @Composable
 fun SeverityBadge(severity: String, modifier: Modifier = Modifier) {
-    val (backgroundColor, contentColor) = when (severity.uppercase()) {
-        "HIGH" -> Color(0xFFFFEBEE) to Color(0xFFD32F2F)
-        "MEDIUM" -> Color(0xFFFFF3E0) to Color(0xFFE65100)
-        else -> Color(0xFFE8F5E9) to Color(0xFF2E7D32)
+    val (bg, text) = when (severity.uppercase()) {
+        "HIGH" -> Color(0xFFFFEBEE) to AppTheme.Error
+        "MEDIUM" -> Color(0xFFFFF3E0) to AppTheme.Warning
+        else -> Color(0xFFE8F5E9) to AppTheme.Success
     }
-
-    Surface(
-        modifier = modifier,
-        color = backgroundColor,
-        shape = RoundedCornerShape(8.dp)
-    ) {
+    Surface(modifier = modifier, color = bg, shape = RoundedCornerShape(AppTheme.BadgeCorner)) {
         Text(
             text = severity.lowercase().replaceFirstChar { it.uppercase() },
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelSmall,
-            color = contentColor,
+            color = text,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center
+        )
+    }
+}
+
+// --- DIALOGS & NAVIGATION ---
+
+@Composable
+fun ParentBottomNavigation(onSettingsClick: () -> Unit) {
+    NavigationBar(containerColor = AppTheme.Surface) {
+        NavigationBarItem(
+            icon = { Icon(Icons.Default.Home, null) },
+            label = { Text("Home") },
+            selected = true,
+            onClick = {} // Already on Home
+        )
+        NavigationBarItem(
+            icon = { Icon(Icons.Default.Settings, null) },
+            label = { Text("Settings") },
+            selected = false,
+            onClick = onSettingsClick // Opens the Logout/Settings Dialog
         )
     }
 }
@@ -362,32 +391,79 @@ fun LinkDeviceDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Link Child Device") },
-        text = { OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("Child Device ID") }) },
+        title = { Text("Pair Child Device") },
+        text = { OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("Child ID") }) },
         confirmButton = { TextButton(onClick = { onConfirm(text) }) { Text("Link") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
 @Composable
-fun ParentBottomNavigation() {
-    NavigationBar(containerColor = Color.White) {
-        NavigationBarItem(icon = { Icon(Icons.Default.Home, null) }, label = { Text("Home") }, selected = true, onClick = {})
-        NavigationBarItem(icon = { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") }, selected = false, onClick = {})
-    }
+fun LogoutDialog(onDismiss: () -> Unit, onLogout: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Settings") },
+        text = { Text("Do you want to log out of your parent account?") },
+        confirmButton = {
+            Button(
+                onClick = onLogout,
+                colors = ButtonDefaults.buttonColors(containerColor = AppTheme.Error)
+            ) {
+                Text("Log Out")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 // --- PREVIEWS ---
 
-@Preview(showBackground = true, showSystemUi = true, device = "id:pixel_6")
+@Preview(showBackground = true, showSystemUi = true)
 @Composable
 fun DashboardPreview() {
     val mockIncidents = listOf(
         FirebaseSyncManager.LogEntry("scam", "HIGH", "Facebook", System.currentTimeMillis()),
-        FirebaseSyncManager.LogEntry("bully", "MEDIUM", "Messenger", System.currentTimeMillis() - 600000),
-        FirebaseSyncManager.LogEntry("hello", "LOW", "TikTok", System.currentTimeMillis() - 120000000)
+        FirebaseSyncManager.LogEntry("bully", "MEDIUM", "Messenger", System.currentTimeMillis() - 600000)
     )
     MaterialTheme {
-        ParentDashboardScreen("Pixel 6 (Mock)", mockIncidents, false, {}, {})
+        ParentDashboardScreen("Pixel 6 (Mock)", mockIncidents, false, {}, {}, {})
+    }
+}
+
+@Preview(showBackground = true, device = "id:pixel_6")
+@Composable
+fun SettingsDialogPreview() {
+    MaterialTheme {
+        // We use a Box with a semi-transparent background to simulate the
+        // "dim" effect that occurs when a dialog is open.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.4f)),
+            contentAlignment = Alignment.Center
+        ) {
+            LogoutDialog(
+                onDismiss = {},
+                onLogout = {}
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun LinkDialogPreview() {
+    MaterialTheme {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.4f)),
+            contentAlignment = Alignment.Center
+        ) {
+            LinkDeviceDialog(
+                onDismiss = {},
+                onConfirm = {}
+            )
+        }
     }
 }

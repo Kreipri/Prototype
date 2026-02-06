@@ -1,56 +1,85 @@
 package com.example.prototype.service
 
+// --- ANDROID CORE ---
 import android.app.*
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.PixelFormat
+import android.graphics.*
 import android.hardware.display.DisplayManager
 import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
-import android.os.Build
-import android.os.Handler
-import android.os.Looper
+import android.os.*
 import android.util.Log
+import android.view.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.*
+import androidx.savedstate.*
+
+// --- PROJECT IMPORTS ---
 import com.example.prototype.R
 import com.example.prototype.data.IncidentRepository
 import com.example.prototype.data.model.Incident
-import com.example.prototype.domain.ContentAnalyzer
+import com.example.prototype.domain.ContentAnalyzer // Using your TextAnalyzer
+import com.example.prototype.utils.sendConsoleUpdate // Import the extension we made earlier
 import com.googlecode.tesseract.android.TessBaseAPI
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
-import androidx.core.graphics.scale
-import androidx.core.graphics.createBitmap
 
 class ScreenCaptureService : Service() {
 
-    // --- 1. CONSTANTS & PROPERTIES ---
     companion object {
-        private const val TAG = "ScreenCaptureDebug"
-        private const val SYNC_INTERVAL_MS = 28_800_000L // 8 Hours
+        private const val TAG = "ScreenCapture"
+        private const val SYNC_INTERVAL = 28_800_000L // 8 Hours
+        private const val CAPTURE_INTERVAL = 3000L    // 3 Seconds
+        private const val DEBOUNCE_TIME_MS = 10_000L  // 10 Seconds Debounce
     }
 
     private lateinit var projection: MediaProjection
     private lateinit var imageReader: ImageReader
     private val handler = Handler(Looper.getMainLooper())
 
-    // Atomic Counters (Thread Safe)
+    // Atomic Counters (From your provided code)
     private val attemptCount = AtomicInteger(0)
     private val successCaptureCount = AtomicInteger(0)
     private val ocrFinishedCount = AtomicInteger(0)
+    private var tess: TessBaseAPI? = null // Persistent instance
 
-    // --- 2. LIFECYCLE METHODS ---
+    // Debounce Map: Stores "badword" -> Last Time Seen
+    private val debounceMap = ConcurrentHashMap<String, Long>()
+
+    // UI Overlay (Compose)
+    private lateinit var windowManager: WindowManager
+    private var overlayView: ComposeView? = null
 
     override fun onBind(intent: Intent?) = null
 
+    override fun onCreate() {
+        super.onCreate()
+        prepareTesseract() // Copy assets first
+        tess = TessBaseAPI().apply {
+            init(filesDir.absolutePath, "eng")
+        }
+    }
+
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
-        // 1. Show Notification immediately (Required for Foreground Service)
         startForeground(1, createNotification())
 
-        val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-
         val resultCode = intent.getIntExtra("resultCode", Activity.RESULT_CANCELED)
-        val data = if (Build.VERSION.SDK_INT >= 33) {
+        val data: Intent? = if (Build.VERSION.SDK_INT >= 33) {
             intent.getParcelableExtra("data", Intent::class.java)
         } else {
             @Suppress("DEPRECATION")
@@ -62,142 +91,181 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        // 2. Initialize Projection
+        val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projection = mgr.getMediaProjection(resultCode, data) ?: return START_NOT_STICKY
-        CaptureState.isRunning = true
 
-        // 3. Broadcast State
-        sendBroadcast(Intent("com.example.prototype.CAPTURE_STARTED").apply {
+        // Broadcast to dismiss the "Enable" Blocker
+        val broadcastIntent = Intent("com.example.prototype.CAPTURE_STARTED").apply {
             setPackage(packageName)
-        })
+        }
+        sendBroadcast(broadcastIntent)
 
-        // 4. Start Loops
+        CaptureState.isRunning = true
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+
         setupVirtualDisplay()
+
+        // Start Loops
         handler.post(captureRunnable)
-        handler.postDelayed(syncRunnable, SYNC_INTERVAL_MS)
+        handler.postDelayed(syncRunnable, SYNC_INTERVAL)
 
         return START_STICKY
     }
 
-    override fun onDestroy() {
-        // Final sync on close (Using Repository, not FirebaseDirect)
-        Thread { IncidentRepository.syncData(applicationContext) }.start()
 
-        handler.removeCallbacks(syncRunnable)
-        handler.removeCallbacks(captureRunnable)
+    private fun prepareTesseract() {
+        val tessDir = File(filesDir, "tessdata")
+        if (!tessDir.exists()) tessDir.mkdirs()
 
-        CaptureState.isRunning = false
-
-        if (::projection.isInitialized) {
-            projection.stop()
-        }
-
-        super.onDestroy()
-    }
-
-    // --- 3. PRIVATE CORE METHODS (Logic) ---
-
-    private fun setupVirtualDisplay() {
-        val metrics = resources.displayMetrics
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-
-        projection.createVirtualDisplay(
-            "capture",
-            width, height, metrics.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader.surface, null, null
-        )
-    }
-
-    private fun runOcr(bitmap: Bitmap, id: Int) {
-        try {
-            // A. Downscale to 50% to save CPU/Battery
-            val width = bitmap.width / 2
-            val height = bitmap.height / 2
-            val scaledBitmap = bitmap.scale(width, height, false)
-
-            // B. Initialize Tesseract
-            // (Note: For production, we'd initialize this ONCE in onCreate to save CPU)
-            val tessBaseAPI = TessBaseAPI()
-            val tessDataPath = filesDir.absolutePath
-            tessBaseAPI.init(tessDataPath, "eng")
-            tessBaseAPI.setImage(scaledBitmap)
-
-            val extractedText = tessBaseAPI.utF8Text
-            tessBaseAPI.end()
-            scaledBitmap.recycle() // Clean up memory
-
-            ocrFinishedCount.incrementAndGet()
-
-            // C. Domain Logic (The "Brain")
-            if (extractedText.isNotEmpty()) {
-                val analysis = ContentAnalyzer.analyze(extractedText)
-
-                if (!analysis.isClean) {
-                    for (violation in analysis.incidents) {
-                        Log.e(TAG, "🚨 DETECTED: ${violation.word} (${violation.severity})")
-
-                        val incident = Incident(
-                            word = violation.word,
-                            severity = violation.severity,
-                            appName = "Facebook" // In future, use AccessibilityService to detect real app
-                        )
-
-                        // D. Data Layer (The Repository handles Saving & Syncing)
-                        IncidentRepository.saveIncident(applicationContext, incident)
-                    }
+        val jsonData = File(tessDir, "eng.traineddata")
+        if (!jsonData.exists()) {
+            assets.open("tessdata/eng.traineddata").use { input ->
+                jsonData.outputStream().use { output ->
+                    input.copyTo(output)
                 }
-            } else {
-                Log.d(TAG, "Cycle #$id: OCR finished (empty).")
+                Log.d("OCR","prepareTesseract DONE")
             }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Cycle #$id: OCR FAILED", e)
         }
     }
 
-    // --- 4. RUNNABLES (Loops) ---
-
+    // --- CAPTURE LOOP ---
     private val captureRunnable = object : Runnable {
         override fun run() {
-            // Only capture if we think Facebook is open (Controlled by AccessibilityService)
-            // Or remove this check if you want to capture EVERYTHING for testing
+            // Hard Gate: Only process if Facebook is confirmed open
             if (ScreenState.isFacebookOpen) {
 
+                // Ensure Overlay is Visible (Main Thread)
+                if (overlayView == null) {
+                    handler.post { showMonitoringOverlay() }
+                }
+
+                // Log Attempt
                 val currentId = attemptCount.incrementAndGet()
-                val image = imageReader.acquireLatestImage()
+                // sendConsoleUpdate("System: Capture Cycle #$currentId started")
+
+                val image = try {
+                    imageReader.acquireLatestImage()
+                } catch (e: Exception) { null }
 
                 if (image != null) {
                     successCaptureCount.incrementAndGet()
                     val bitmap = imageToBitmap(image)
                     image.close()
 
-                    // Run OCR in background thread
+                    // Run OCR in background
                     Thread {
                         runOcr(bitmap, currentId)
                         bitmap.recycle()
                     }.start()
                 }
+            } else {
+                // Not in Facebook: Hide Overlay & Flush Buffer
+                if (overlayView != null) {
+                    handler.post { removeOverlay() }
+                }
+                imageReader.acquireLatestImage()?.close()
             }
-            // Repeat every 3 seconds
-            handler.postDelayed(this, 3000)
+
+            handler.postDelayed(this, CAPTURE_INTERVAL)
         }
+    }
+
+    // --- OCR LOGIC (With Timing & Debounce) ---
+    private fun runOcr(bitmap: Bitmap, id: Int) {
+        val api = tess ?: return // Ensure Tesseract is ready
+
+        try {
+            val startTime = System.currentTimeMillis()
+
+            // 1. Optimization: Scale down to improve speed
+            val scaled = Bitmap.createScaledBitmap(bitmap, bitmap.width / 2, bitmap.height / 2, false)
+
+            // 2. Process Image
+            api.setImage(scaled)
+            val text = api.utF8Text
+            scaled.recycle() // Free memory immediately
+
+            val duration = System.currentTimeMillis() - startTime
+
+            if (!text.isNullOrBlank()) {
+                // 3. Analyze text for inappropriate words
+                val result = ContentAnalyzer.analyze(text)
+
+                if (!result.isClean) {
+                    result.incidents.forEach { incident ->
+
+                        // 4. Debounce: Check if we've seen this word in the last 10s
+                        val lastSeen = debounceMap[incident.word] ?: 0L
+                        val currentTime = System.currentTimeMillis()
+
+                        if (currentTime - lastSeen > 10_000L) { // 10s Debounce
+                            debounceMap[incident.word] = currentTime
+
+                            // 5. Save and Sync
+                            // High severity logic is handled inside saveIncident
+                            IncidentRepository.saveIncident(
+                                applicationContext,
+                                Incident(incident.word, incident.severity, "Facebook")
+                            )
+
+                            sendConsoleUpdate("FLAG: '${incident.word}' (${incident.severity}) detected in ${duration}ms")
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("ScreenCapture", "OCR Processing Error", e)
+            sendConsoleUpdate("Error: OCR Failed - ${e.message}")
+        }
+    }
+
+    // --- COMPOSE OVERLAY (Click-Through) ---
+    private fun showMonitoringOverlay() {
+        if (overlayView != null) return
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            // 🟢 CLICK THROUGH FLAGS
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = 40
+            y = 100
+        }
+
+        overlayView = ComposeView(this).apply {
+            val lifecycleOwner = ServiceLifecycleOwner()
+            lifecycleOwner.attachToView(this)
+            setContent { MonitoringIndicator() }
+        }
+
+        windowManager.addView(overlayView, params)
+    }
+
+    private fun removeOverlay() {
+        overlayView?.let { windowManager.removeView(it) }
+        overlayView = null
+    }
+
+    // --- STANDARD HELPERS ---
+    private fun setupVirtualDisplay() {
+        val metrics = resources.displayMetrics
+        imageReader = ImageReader.newInstance(metrics.widthPixels, metrics.heightPixels, PixelFormat.RGBA_8888, 2)
+        projection.createVirtualDisplay("capture", metrics.widthPixels, metrics.heightPixels, metrics.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader.surface, null, null)
     }
 
     private val syncRunnable = object : Runnable {
         override fun run() {
-            Log.d(TAG, "⏰ Scheduled Sync starting...")
-            Thread {
-                IncidentRepository.syncData(applicationContext)
-            }.start()
-            handler.postDelayed(this, SYNC_INTERVAL_MS)
+            Thread { IncidentRepository.syncData(applicationContext) }.start()
+            handler.postDelayed(this, SYNC_INTERVAL)
         }
     }
-
-    // --- 5. HELPER METHODS ---
 
     private fun imageToBitmap(image: Image): Bitmap {
         val plane = image.planes[0]
@@ -205,34 +273,64 @@ class ScreenCaptureService : Service() {
         val pixelStride = plane.pixelStride
         val rowStride = plane.rowStride
         val rowPadding = rowStride - pixelStride * image.width
-
-        val bitmap = createBitmap(image.width + rowPadding / pixelStride, image.height)
+        val bitmap = Bitmap.createBitmap(image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888)
         bitmap.copyPixelsFromBuffer(buffer)
-
-        // Crop the padding out
         return Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
     }
 
     private fun createNotification(): Notification {
-        val channelId = "capture_channel"
-        val channel = NotificationChannel(channelId, "Screen Monitor", NotificationManager.IMPORTANCE_LOW)
+        val channelId = "monitor_svc"
+        val channel = NotificationChannel(channelId, "Active Monitor", NotificationManager.IMPORTANCE_MIN)
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         return Notification.Builder(this, channelId)
-            .setContentTitle("SafeMonitor Active")
-            .setContentText("Scanning for harmful content...")
-            .setSmallIcon(R.drawable.ic_menu_camera) // Ensure this icon exists!
+            .setContentTitle("SafeMonitor Running")
+            .setSmallIcon(R.drawable.ic_menu_camera)
             .build()
     }
 
-    // --- 6. INNER OBJECTS / STATE ---
-
-    // Global State used by AccessibilityService to pause/resume capture
-    object CaptureState {
-        @Volatile var isRunning: Boolean = false
+    override fun onDestroy() {
+        Thread { IncidentRepository.syncData(applicationContext) }.start()
+        handler.removeCallbacksAndMessages(null)
+        removeOverlay()
+        CaptureState.isRunning = false
+        if (::projection.isInitialized) projection.stop()
+        tess?.end()
+        super.onDestroy()
     }
 
-    // Simple state holder for external services to toggle
-    object ScreenState {
-        @Volatile var isFacebookOpen: Boolean = true // Default to true for testing
+    // Global States
+    object CaptureState { @Volatile var isRunning = false }
+    object ScreenState { @Volatile var isFacebookOpen = false }
+}
+
+// --- COMPOSE UI ---
+@Composable
+fun MonitoringIndicator() {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            // Semi-transparent blue
+            .background(Color(0x662196F3))
+            .padding(10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(Icons.Default.Visibility, "Monitoring", tint = Color.White)
+    }
+}
+
+// --- LIFECYCLE HELPER ---
+class ServiceLifecycleOwner : LifecycleOwner, SavedStateRegistryOwner {
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private val savedStateRegistryController = SavedStateRegistryController.create(this)
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
+    fun attachToView(view: ComposeView) {
+        savedStateRegistryController.performRestore(null)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        view.setViewTreeLifecycleOwner(this)
+        view.setViewTreeSavedStateRegistryOwner(this)
     }
 }
