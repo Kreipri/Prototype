@@ -14,6 +14,27 @@ import android.widget.Button
 import com.example.prototype.R
 import com.example.prototype.ui.child.CapturePermissionActivity
 
+// --- JETPACK COMPOSE UI ---
+import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.*
+
+// --- COMPOSE MATERIAL & ICONS ---
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+
+// --- COMPOSE RUNTIME & TOOLS ---
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.*
+
 /**
  * Manages the full-screen blocking overlay.
  * Uses a BroadcastReceiver to self-dismiss once capture is verified.
@@ -97,4 +118,48 @@ class OverlayService : Service() {
     }
 
     override fun onBind(intent: Intent?) = null
+}
+
+// --- COMPOSABLE ---
+
+@Composable
+fun MonitoringBlocker(onEnableClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.85f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier.padding(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text("Monitoring Required", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("To continue using Facebook, you must enable screen monitoring.", fontSize = 16.sp)
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(
+                    onClick = onEnableClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) {
+                    Text("Enable Monitor", color = Color.White)
+                }
+            }
+        }
+    }
+}
+
+// --- PREVIEW ---
+@Preview(showBackground = true)
+@Composable
+fun MonitoringBlockerPreview() {
+    MaterialTheme {
+        // We wrap it in a Box to simulate the full-screen overlay effect
+        Box(Modifier.fillMaxSize()) {
+            MonitoringBlocker(onEnableClick = {})
+        }
+    }
 }

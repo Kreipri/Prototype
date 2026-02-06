@@ -14,6 +14,27 @@ import com.example.prototype.ui.welcome.RoleSelectionActivity
 import androidx.core.content.edit
 import androidx.core.graphics.toColorInt
 
+// --- JETPACK COMPOSE UI ---
+import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.*
+
+// --- COMPOSE MATERIAL & ICONS ---
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+
+// --- COMPOSE RUNTIME & TOOLS ---
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.*
+
 /**
  * Dashboard for the CHILD role.
  *
@@ -158,5 +179,105 @@ class ChildDashboardActivity : AppCompatActivity() {
         val currentText = txtLogs.text.toString()
         val newText = "• $message\n$currentText"
         txtLogs.text = newText
+    }
+}
+
+// --- COMPOSABLE ---
+@Composable
+fun ChildDashboardScreen(
+    deviceId: String,
+    permissionStatus: String,
+    logs: String,
+    onForceUpload: () -> Unit,
+    onLogout: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF5F5F5))
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp)
+    ) {
+        Text("Child Device", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Pairing Code Section
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("DEVICE ID (Pairing Code)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+                Text(deviceId, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // System Status
+        StatusSection(label = "System Status", statusText = permissionStatus)
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Live Logs Console
+        Text("Live Logs", fontWeight = FontWeight.Bold)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 120.dp)
+                .background(Color.White, RoundedCornerShape(4.dp))
+                .border(1.dp, Color.LightGray)
+                .padding(12.dp)
+        ) {
+            Text(logs, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Actions
+        Button(onClick = onForceUpload, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+            Text("Force Cloud Upload")
+        }
+
+        Button(
+            onClick = onLogout,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text("Log Out / Reset")
+        }
+    }
+}
+
+@Composable
+fun StatusSection(label: String, statusText: String) {
+    val isWarning = statusText.contains("Missing", ignoreCase = true)
+    Text(label, fontWeight = FontWeight.Bold)
+    Text(
+        text = statusText,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .background(if (isWarning) Color(0xFFFFEBEE) else Color(0xFFE8F5E9))
+            .padding(12.dp),
+        color = if (isWarning) Color(0xFFD32F2F) else Color(0xFF2E7D32)
+    )
+}
+
+// --- PREVIEW ---
+@Preview(showBackground = true, showSystemUi = true)
+@Composable
+fun ChildDashboardPreview() {
+    MaterialTheme {
+        ChildDashboardScreen(
+            deviceId = "A7-9B2-C4",
+            permissionStatus = "🔴 Permissions Missing",
+            logs = "Monitoring started...\nCaptured: 'scam'\nUploading to cloud...",
+            onForceUpload = {},
+            onLogout = {}
+        )
     }
 }

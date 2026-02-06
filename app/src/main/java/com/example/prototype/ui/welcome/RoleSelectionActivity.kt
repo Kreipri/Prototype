@@ -4,10 +4,32 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.runtime.Composable
 import com.example.prototype.R
 import com.example.prototype.ui.child.ChildDashboardActivity
 import com.example.prototype.ui.parent.ParentDashboardActivity
 import androidx.core.content.edit
+
+// --- JETPACK COMPOSE UI ---
+import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.*
+
+// --- COMPOSE MATERIAL & ICONS ---
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+
+// --- COMPOSE RUNTIME & TOOLS ---
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.*
 
 /**
  * Entry point of the application ("Gatekeeper Activity").
@@ -128,5 +150,72 @@ class RoleSelectionActivity : AppCompatActivity() {
         val intent = Intent(this, activityClass)
         startActivity(intent)
         finish() // DESTROY this activity so it's removed from the Back Stack.
+    }
+}
+
+// --- COMPOSABLE ---
+
+@Composable
+fun RoleSelectionScreen(
+    onSelectChild: () -> Unit,
+    onSelectParent: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+            .padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "OverSee",
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF2196F3)
+        )
+        Text(
+            text = "Choose which device you are using.",
+            fontSize = 15.sp,
+            color = Color(0xFF303030),
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(48.dp))
+
+        Button(
+            onClick = onSelectChild,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+            shape = RoundedCornerShape(8.dp),
+            contentPadding = PaddingValues(16.dp)
+        ) {
+            Text("👶 CHILD DEVICE", fontSize = 18.sp)
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = onSelectParent,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3)),
+            shape = RoundedCornerShape(8.dp),
+            contentPadding = PaddingValues(16.dp)
+        ) {
+            Text("👨‍👩‍👧 PARENT DEVICE", fontSize = 18.sp)
+        }
+    }
+}
+
+// --- PREVIEW ---
+
+@Preview(showBackground = true, showSystemUi = true)
+@Composable
+fun RoleSelectionPreview() {
+    MaterialTheme {
+        RoleSelectionScreen(
+            onSelectChild = {},
+            onSelectParent = {}
+        )
     }
 }
