@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.*
 
@@ -58,6 +59,9 @@ class RoleSelectionActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val prefs = getSharedPreferences("AppConfig", MODE_PRIVATE)
+        val user = prefs.getString("name", "User") ?: "User"
+
         /**
          * SEQUENCE STEP 1: Auto-Login Check.
          * We do this BEFORE setContent to prevent the UI from "flashing" the selection
@@ -72,6 +76,7 @@ class RoleSelectionActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 RoleSelectionScreen(
+                    user = user,
                     onSelectChild = { handleChildLogin() },
                     onSelectParent = { handleParentLogin() }
                 )
@@ -162,85 +167,107 @@ class RoleSelectionActivity : ComponentActivity() {
 
 @Composable
 fun RoleSelectionScreen(
+    user: String,
     onSelectChild: () -> Unit,
     onSelectParent: () -> Unit
 ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(AppTheme.Background),
-        contentAlignment = Alignment.Center
+            .background(AppTheme.Background)
+            .padding(57.dp, 103.dp, 57.dp, 103.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Card(
-            modifier = Modifier
-                .padding(32.dp)
-                .fillMaxWidth(),
-            shape = RoundedCornerShape(AppTheme.CardCorner),
-            colors = CardDefaults.cardColors(containerColor = AppTheme.Surface),
-            elevation = CardDefaults.cardElevation(8.dp)
+        Column(
+            modifier = Modifier.fillMaxHeight(),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
-                modifier = Modifier.padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(32.dp, Alignment.Top)){
                 Text(
-                    text = "OverSee",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = AppTheme.Primary
+                    modifier = Modifier.fillMaxWidth(),
+                    text = "Hello, $user!",
+                    style = AppTheme.TitlePageStyle,
+                    textAlign = TextAlign.Left
                 )
                 Text(
-                    text = "Select device role",
-                    fontSize = 14.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(top = 8.dp, bottom = 32.dp)
-                )
-
-                // Triggers handleChildLogin() on click.
-                RoleButton(
-                    text = "Child Device",
-                    icon = Icons.Default.Face,
-                    color = AppTheme.Success,
-                    onClick = onSelectChild
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Triggers handleParentLogin() on click.
-                RoleButton(
-                    text = "Parent Device",
-                    icon = Icons.Default.Person,
-                    color = AppTheme.Primary,
-                    onClick = onSelectParent
+                    text = "Which device are you currently using?",
+                    style = AppTheme.BodyBase,
                 )
             }
+            Spacer(modifier = Modifier.height(90.dp))
+            Column(
+                Modifier
+                    .width(200.dp),
+                verticalArrangement = Arrangement.spacedBy(50.dp, Alignment.Top)
+            ){
+                Column(horizontalAlignment = Alignment.CenterHorizontally){
+                    Icon(
+                        modifier = Modifier.size(88.dp),
+                        imageVector = Icons.Default.Face,
+                        contentDescription = "OverSee Icon",
+                        tint = AppTheme.Success // Or any color from your theme
+                    )
+                    // Triggers handleChildLogin() on click.
+                    RoleButton(
+                        text = "Child Device",
+                        color = AppTheme.Success,
+                        onClick = onSelectChild
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally){
+                    Icon(
+                        modifier = Modifier.size(88.dp),
+                        imageVector = Icons.Default.Person,
+                        contentDescription = "OverSee Icon",
+                        tint = AppTheme.Primary // Or any color from your theme
+                    )
+                    // Triggers handleParentLogin() on click.
+                    RoleButton(
+                        text = "Parent Device",
+                        color = AppTheme.Primary,
+                        onClick = onSelectParent
+                    )
+                }
+            }
         }
+
     }
 }
 
 @Composable
 fun RoleButton(
     text: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
     color: Color,
     onClick: () -> Unit
 ) {
     Button(
         onClick = onClick,
         modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp),
+            .height(56.dp)
+            .fillMaxWidth(),
         colors = ButtonDefaults.buttonColors(containerColor = color),
         shape = RoundedCornerShape(12.dp),
         elevation = ButtonDefaults.buttonElevation(4.dp)
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
         Spacer(modifier = Modifier.width(12.dp))
         Text(
             text = text.uppercase(),
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, device = "id:pixel_6")
+@Composable
+fun RoleSelectionScreenPreview() {
+    // Replace with your actual Theme wrapper if you have one
+    MaterialTheme {
+        RoleSelectionScreen(
+            user = "Admin",
+            onSelectChild = {},
+            onSelectParent = {}
         )
     }
 }

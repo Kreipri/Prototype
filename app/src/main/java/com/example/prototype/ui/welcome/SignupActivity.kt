@@ -117,7 +117,7 @@ fun SignUpScreen(onSignUp: (String, String, String) -> Unit, onLoginClick: () ->
 
             // 2. Logo & Header (Matches Login)
             Icon(
-                modifier = Modifier.size(150.dp),
+                modifier = Modifier.size(150.dp).padding(30.dp),
                 imageVector = Icons.Default.VerifiedUser,
                 contentDescription = "OverSee Icon",
                 tint = AppTheme.Surface
@@ -133,9 +133,9 @@ fun SignUpScreen(onSignUp: (String, String, String) -> Unit, onLoginClick: () ->
             ) {
                 Column(
                     // Reduced top padding slightly (71dp -> 40dp) to fit the extra field comfortably
-                    modifier = Modifier.padding(start = 57.dp, top = 40.dp, end = 57.dp, bottom = 57.dp),
+                    modifier = Modifier.padding(start = 57.dp, top = 64.dp, end = 57.dp, bottom = 100.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(30.dp)
                 ) {
                     Text(
                         text = "Sign Up",
@@ -173,21 +173,25 @@ fun SignUpScreen(onSignUp: (String, String, String) -> Unit, onLoginClick: () ->
                     Spacer(modifier = Modifier.height(10.dp))
 
                     // -- BUTTONS --
-                    Button(
-                        onClick = { onSignUp(name, email, password) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = AppTheme.Primary)
-                    ) {
-                        Text("Create Account", style = AppTheme.BodyBase, color = AppTheme.Surface)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally){
+                        Button(
+                            onClick = { onSignUp(name, email, password) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = AppTheme.Primary)
+                        ) {
+                            Text("Create Account", style = AppTheme.BodyBase, color = AppTheme.Surface)
+                        }
+
+                        TextButton(onClick = onLoginClick) {
+                            Text(
+                                text = "Already have an account? Login",
+                                style = AppTheme.BodyBase,
+                                textDecoration = TextDecoration.Underline
+                            )
+                        }
                     }
 
-                    TextButton(onClick = onLoginClick) {
-                        Text(
-                            text = "Already have an account? Login",
-                            style = AppTheme.BodyBase,
-                            textDecoration = TextDecoration.Underline
-                        )
-                    }
+
                 }
             }
         }

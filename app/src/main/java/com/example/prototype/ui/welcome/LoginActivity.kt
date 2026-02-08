@@ -132,7 +132,7 @@ fun LoginScreen(onLogin: (String, String) -> Unit, onSignUpClick: () -> Unit) {
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 shape = RoundedCornerShape(44.dp, 44.dp, 0.dp, 0.dp)
             ) {
-                Column(Modifier.padding(57.dp, 71.dp, 57.dp, 57.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Top)) {
+                Column(Modifier.padding(57.dp, 71.dp, 57.dp, 100.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Top)) {
                     OutlinedTextField(
                         value = email,
                         onValueChange = { email = it },
@@ -148,6 +148,8 @@ fun LoginScreen(onLogin: (String, String) -> Unit, onSignUpClick: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp)
                     )
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     Button(
                         onClick = { onLogin(email, password) },
