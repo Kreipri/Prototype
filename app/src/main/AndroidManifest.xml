@@ -19,8 +19,18 @@
         android:theme="@style/Theme.Prototype">
         <activity android:name=".ui.child.ChildDashboardActivity" android:exported="false" />
         <activity android:name=".ui.child.CapturePermissionActivity" />
-        <activity android:name=".ui.welcome.RoleSelectionActivity"
-            android:exported="true">
+        <activity
+            android:name=".ui.welcome.RoleSelectionActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.welcome.SignupActivity"
+            android:exported="false" />
+
+
+        <activity
+            android:name=".ui.welcome.LoginActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Prototype">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

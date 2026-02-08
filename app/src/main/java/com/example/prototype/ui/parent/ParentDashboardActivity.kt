@@ -3,6 +3,7 @@ package com.example.prototype.ui.parent
 // --- ANDROID & CORE ---
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -42,22 +43,24 @@ import java.text.SimpleDateFormat
 import java.util.*
 import androidx.core.content.edit
 
-/**
- * ParentDashboardActivity: Main entry point for the Parent View.
- */
+
 class ParentDashboardActivity : ComponentActivity() {
     private val db = FirebaseFirestore.getInstance()
+    private val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+
 
     // --- STATE MANAGEMENT ---
     private var incidentList = mutableStateListOf<FirebaseSyncManager.LogEntry>()
     private var currentTargetId = mutableStateOf("NOT_LINKED")
     private var isRefreshing = mutableStateOf(false)
 
+
     // --- LIFECYCLE ---
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         loadSavedTargetId()
+        syncTargetIdWithCloud()
         refreshDashboard()
 
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
@@ -109,12 +112,48 @@ class ParentDashboardActivity : ComponentActivity() {
         currentTargetId.value = prefs.getString("target_id", "NOT_LINKED") ?: "NOT_LINKED"
     }
 
+    private fun syncTargetIdWithCloud() {
+        val uid = auth.currentUser?.uid ?: return
+
+        // Pull the linked ID from the user's profile in the cloud
+        db.collection("users").document(uid).get()
+            .addOnSuccessListener { document ->
+                val cloudId = document.getString("linked_child_id") ?: ""
+                if (cloudId.isNotEmpty()) {
+                    // Update local storage and UI
+                    getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
+                        putString("target_id", cloudId)
+                    }
+                    currentTargetId.value = cloudId
+                    refreshDashboard()
+                }
+            }
+    }
+
+    // 🟢 UPDATED: Save to cloud whenever you link a new device
     private fun updateTargetId(newId: String) {
+        val uid = auth.currentUser?.uid ?: return
+
+        // 1. Update UI and Local Storage IMMEDIATELY
         getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
             putString("target_id", newId)
         }
-        currentTargetId.value = newId
-        refreshDashboard()
+        currentTargetId.value = newId // UI updates now
+
+        // 2. Sync to Firestore in the background
+        db.collection("users").document(uid)
+            .update("linked_child_id", newId)
+            .addOnSuccessListener {
+                refreshDashboard()
+                Toast.makeText(this, "Link Synced to Cloud", Toast.LENGTH_SHORT).show()
+            }
+            .addOnFailureListener { e ->
+                // If the document doesn't exist, we use 'set' with merge instead of 'update'
+                db.collection("users").document(uid)
+                    .set(mapOf("linked_child_id" to newId), SetOptions.merge())
+
+                Log.e("ParentDashboard", "Cloud update failed, retrying with merge", e)
+            }
     }
 
     private fun refreshDashboard() {
@@ -142,14 +181,16 @@ class ParentDashboardActivity : ComponentActivity() {
     }
 
     private fun performLogout() {
-        // Clear all session data
         getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
-            clear() // Removes role, target_id, is_logged_in, etc.
+            // Only remove the role, not the target_id link
+            remove("role")
         }
 
-        // Redirect to Entry Point (RoleSelection or Login)
-        val intent = Intent(this, RoleSelectionActivity::class.java)
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK // Clear back stack
+        // Sign out of Firebase
+        auth.signOut()
+
+        val intent = Intent(this, com.example.prototype.ui.welcome.LoginActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         startActivity(intent)
         finish()
     }

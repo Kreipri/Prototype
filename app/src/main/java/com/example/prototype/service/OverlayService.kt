@@ -51,11 +51,17 @@ class OverlayService : Service() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        // Register receiver to know when to dismiss
+        // 1. Register receiver to know when to dismiss (keep this as is)
         val filter = IntentFilter(ACTION_CAPTURE_STARTED)
         registerReceiver(captureStartReceiver, filter, RECEIVER_NOT_EXPORTED)
 
-        showBlocker()
+        // 2. LOGIC CHECK: Only show the blocker if capture is NOT already running
+        if (!ScreenCaptureService.CaptureState.isRunning) {
+            showBlocker()
+        } else {
+            // If it's already running, this service is not needed right now
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -94,7 +100,7 @@ class OverlayService : Service() {
 
                 setContent {
                     MaterialTheme {
-                        MonitoringBlocker(onEnableClick = { startPermissionActivity() })
+                        MonitoringBlocker(onEnableClick = { startPermissionActivity() }, onDeclineClick = { handleDecline() })
                     }
                 }
             }
@@ -119,12 +125,27 @@ class OverlayService : Service() {
         }
         startActivity(intent)
     }
+
+    /**
+     * Logic: Minimizes the current app and removes the overlay.
+     */
+    private fun handleDecline() {
+        // 1. Move the current task (Facebook) to the background by going Home
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        startActivity(homeIntent)
+
+        // 2. Remove the blocker so the device is usable
+        removeBlocker()
+    }
 }
 
 // --- COMPOSABLE UI ---
 
 @Composable
-fun MonitoringBlocker(onEnableClick: () -> Unit) {
+fun MonitoringBlocker(onEnableClick: () -> Unit, onDeclineClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -141,21 +162,38 @@ fun MonitoringBlocker(onEnableClick: () -> Unit) {
                 modifier = Modifier.padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Monitoring Required", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                Text(
+                    "Monitoring Required",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black // In Dark Mode, ensures visibility
+                )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    "To continue using this device, you must enable screen monitoring.",
+                    "To use Facebook, you must enable screen monitoring.",
                     fontSize = 16.sp,
                     color = Color.Gray,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(24.dp))
+
+                // Primary Action: Enable
                 Button(
                     onClick = onEnableClick,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
                 ) {
-                    Text("Enable Monitor", color = Color.White)
+                    Text("Enable & Continue", color = Color.White)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Choice Action: Exit App
+                TextButton(
+                    onClick = onDeclineClick,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Not Now (Exit App)", color = Color.Gray)
                 }
             }
         }
@@ -174,9 +212,7 @@ fun MonitoringBlockerPreview() {
         // We use a Box to simulate the full-screen overlay effect
         Box(modifier = Modifier.fillMaxSize()) {
             MonitoringBlocker(
-                onEnableClick = {
-                    // This would normally trigger the CapturePermissionActivity
-                }
+                onEnableClick = {}, onDeclineClick = {}
             )
         }
     }

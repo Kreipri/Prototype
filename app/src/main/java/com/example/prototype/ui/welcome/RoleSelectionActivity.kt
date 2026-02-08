@@ -23,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.*
 
@@ -33,19 +32,24 @@ import com.example.prototype.ui.parent.ParentDashboardActivity
 import com.example.prototype.ui.theme.AppTheme
 
 /**
- * RoleSelectionActivity: The "Gatekeeper" of the application.
- * * Responsibilities:
- * 1. Auto-Login: Checks for existing sessions to bypass this screen.
- * 2. Role UI: Displays the "Parent" vs "Child" selection.
- * 3. Identity: Generates unique Device IDs for child devices.
+ * RoleSelectionActivity
+ * * LOGIC FLOW SUMMARY:
+ * 1. App Launch -> onCreate().
+ * 2. Check Persistence -> attemptAutoLogin() checks if a role exists in SharedPreferences.
+ * 3. Decision Point:
+ * - IF ROLE EXISTS: Direct navigation to specific Dashboard (Flow ends here).
+ * - IF NO ROLE: Render RoleSelectionScreen UI.
+ * 4. User Interaction:
+ * - Child Selected -> handleChildLogin() -> Generate ID -> Save Role -> Dashboard.
+ * - Parent Selected -> handleParentLogin() -> Save Role -> Dashboard.
  */
 class RoleSelectionActivity : ComponentActivity() {
 
     // --- CONSTANTS ---
     companion object {
-        private const val PREFS_NAME = "AppConfig"
-        private const val KEY_ROLE = "role"
-        private const val KEY_DEVICE_ID = "device_id"
+        private const val PREFS_NAME = "AppConfig" // The physical XML file name in storage.
+        private const val KEY_ROLE = "role"        // Key for storing the user type.
+        private const val KEY_DEVICE_ID = "device_id" // Key for the child's unique identifier.
         private const val ROLE_CHILD = "CHILD"
         private const val ROLE_PARENT = "PARENT"
     }
@@ -54,11 +58,17 @@ class RoleSelectionActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. AUTO-LOGIN CHECK
-        // If a role is already saved, skip UI and go straight to Dashboard
+        /**
+         * SEQUENCE STEP 1: Auto-Login Check.
+         * We do this BEFORE setContent to prevent the UI from "flashing" the selection
+         * screen if the user is already logged in.
+         */
         if (attemptAutoLogin()) return
 
-        // 2. RENDER UI
+        /**
+         * SEQUENCE STEP 2: Render UI.
+         * Only reached if attemptAutoLogin returns false (no session found).
+         */
         setContent {
             MaterialTheme {
                 RoleSelectionScreen(
@@ -72,45 +82,60 @@ class RoleSelectionActivity : ComponentActivity() {
     // --- LOGIC: SESSION MANAGEMENT ---
 
     /**
-     * Checks SharedPreferences for an active session.
-     * Returns TRUE if redirection happened (stopping UI rendering).
+     * DATA FLOW: SharedPreferences -> App Logic.
+     * Reads the 'AppConfig' file to see if a role has been persisted.
      */
     private fun attemptAutoLogin(): Boolean {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
+        // Read the stored role; returns null if it's the first run.
         return when (prefs.getString(KEY_ROLE, null)) {
             ROLE_CHILD -> {
+                // If a child role exists, redirect to Child Dashboard.
                 navigateToDashboard(ChildDashboardActivity::class.java)
                 true
             }
             ROLE_PARENT -> {
+                // If a parent role exists, redirect to Parent Dashboard.
                 navigateToDashboard(ParentDashboardActivity::class.java)
                 true
             }
-            else -> false // No session found, show selection screen
+            else -> false // No session found; proceeds to show the UI.
         }
     }
 
     // --- LOGIC: ROLE HANDLERS ---
 
+    /**
+     * DATA FLOW: Logic -> SharedPreferences.
+     * Specific logic for setting up a Child device.
+     */
     private fun handleChildLogin() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
-        // Generate a permanent Device ID if one doesn't exist.
-        // We do this once so the parent doesn't have to re-link if the app restarts.
+        /**
+         * IDENTITY GENERATION:
+         * A Child device needs a persistent ID so the Parent can link to it.
+         * We check if it exists first to avoid overwriting a previous ID.
+         */
         if (!prefs.contains(KEY_DEVICE_ID)) {
-            val newId = (100000..999999).random().toString() // Simple 6-digit code
-            prefs.edit { putString(KEY_DEVICE_ID, newId) }
+            val newId = (100000..999999).random().toString() // Generate a 6-digit link code.
+            prefs.edit { putString(KEY_DEVICE_ID, newId) }   // Save to storage.
         }
 
         saveRoleAndRedirect(ROLE_CHILD, ChildDashboardActivity::class.java)
     }
 
     private fun handleParentLogin() {
-        // Parents act as "Viewers" and don't need a generated ID.
+        // Parent devices don't need a generated ID as they are the "viewers".
         saveRoleAndRedirect(ROLE_PARENT, ParentDashboardActivity::class.java)
     }
 
+    /**
+     * PERSISTENCE:
+     * Commits the selected role to SharedPreferences so attemptAutoLogin()
+     * finds it next time the app starts.
+     */
     private fun saveRoleAndRedirect(role: String, targetActivity: Class<*>) {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
             putString(KEY_ROLE, role)
@@ -118,28 +143,34 @@ class RoleSelectionActivity : ComponentActivity() {
         navigateToDashboard(targetActivity)
     }
 
+    /**
+     * NAVIGATION SEQUENCE:
+     * 1. Starts the target activity (Parent or Child Dashboard).
+     * 2. Calls finish().
+     * * STRATEGIC NOTE: By calling finish(), we remove RoleSelectionActivity from the
+     * Android Back Stack. This means if the user presses "Back" from the Dashboard,
+     * they exit the app instead of coming back to this selection screen.
+     */
     private fun navigateToDashboard(activityClass: Class<*>) {
         startActivity(Intent(this, activityClass))
-        finish() // Kill this activity so "Back" button exits the app instead of returning here
+        finish()
     }
 }
 
 // --- COMPOSE UI COMPONENTS ---
+// These are "stateless" UI components that purely handle the visual presentation.
 
 @Composable
 fun RoleSelectionScreen(
     onSelectChild: () -> Unit,
     onSelectParent: () -> Unit
 ) {
-    // Root container using AppTheme Background
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(AppTheme.Background),
         contentAlignment = Alignment.Center
     ) {
-
-        // Central Card for Focus
         Card(
             modifier = Modifier
                 .padding(32.dp)
@@ -153,7 +184,6 @@ fun RoleSelectionScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                // App Logo / Title
                 Text(
                     text = "OverSee",
                     fontSize = 32.sp,
@@ -167,7 +197,7 @@ fun RoleSelectionScreen(
                     modifier = Modifier.padding(top = 8.dp, bottom = 32.dp)
                 )
 
-                // Role Buttons
+                // Triggers handleChildLogin() on click.
                 RoleButton(
                     text = "Child Device",
                     icon = Icons.Default.Face,
@@ -177,6 +207,7 @@ fun RoleSelectionScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // Triggers handleParentLogin() on click.
                 RoleButton(
                     text = "Parent Device",
                     icon = Icons.Default.Person,
@@ -188,9 +219,6 @@ fun RoleSelectionScreen(
     }
 }
 
-/**
- * Reusable Button Component to ensure consistent styling.
- */
 @Composable
 fun RoleButton(
     text: String,
@@ -213,19 +241,6 @@ fun RoleButton(
             text = text.uppercase(),
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold
-        )
-    }
-}
-
-// --- PREVIEW ---
-
-@Preview(showBackground = true, showSystemUi = true)
-@Composable
-fun RoleSelectionPreview() {
-    MaterialTheme {
-        RoleSelectionScreen(
-            onSelectChild = {},
-            onSelectParent = {}
         )
     }
 }

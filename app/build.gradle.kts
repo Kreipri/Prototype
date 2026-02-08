@@ -43,6 +43,7 @@ android {
 dependencies {
     // Compose BOM
     implementation(platform("androidx.compose:compose-bom:2024.01.00"))
+    implementation(platform("com.google.firebase:firebase-bom:33.9.0"))
 
     // Compose Libraries
     implementation("androidx.compose.ui:ui")
@@ -55,6 +56,7 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:34.8.0"))
     implementation("com.google.firebase:firebase-analytics")
     implementation("com.google.firebase:firebase-firestore-ktx:24.10.0")
+    implementation ("com.google.firebase:firebase-auth")
 
     // Tesseract OCR
     implementation("com.rmtheis:tess-two:9.1.0")
@@ -69,6 +71,7 @@ dependencies {
     implementation(libs.locationdelegation)
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.tooling.preview)
+
 
     // Test Dependencies
     testImplementation(libs.junit)

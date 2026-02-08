@@ -39,11 +39,12 @@ import androidx.compose.ui.unit.*
 
 // --- PROJECT SPECIFIC ---
 import com.example.prototype.data.remote.FirebaseSyncManager
-import com.example.prototype.service.FacebookAccessibilityService
+import com.example.prototype.service.OverlayService
 import com.example.prototype.ui.theme.AppTheme
 import com.example.prototype.ui.welcome.RoleSelectionActivity
 import com.google.firebase.FirebaseApp
 import com.example.prototype.service.ScreenCaptureService
+import com.example.prototype.utils.sendConsoleUpdate
 
 // --- UTILS ---
 import java.text.SimpleDateFormat
@@ -64,6 +65,8 @@ class ChildDashboardActivity : ComponentActivity() {
     private var isFirebaseReady = mutableStateOf(false)
     private var isScreenCaptureActive = mutableStateOf(false)
 
+    private val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+    private val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
     private val consoleReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val message = intent?.getStringExtra("message") ?: return
@@ -73,30 +76,27 @@ class ChildDashboardActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Register for updates from services immediately.
         val filter = IntentFilter("com.example.prototype.CONSOLE_UPDATE")
         registerReceiver(consoleReceiver, filter, RECEIVER_NOT_EXPORTED)
-        loadDeviceInfo()
-        performHealthCheck()
+
+        loadDeviceInfo()     // Data Flow: Preferences -> UI
+        performHealthCheck() // Logic: Check System Permissions
         addToConsole("System Initialized.")
 
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
 
         setContent {
             MaterialTheme {
-                // UI State for Dialogs
                 var showEditDialog by remember { mutableStateOf(false) }
 
-                // Monitor Facebook status in real-time
-                val fbStatus = ScreenCaptureService.ScreenState.isFacebookOpen
-                LaunchedEffect(fbStatus) {
-                    addToConsole(if (fbStatus) "App Event: Facebook OPENED" else "App Event: Facebook CLOSED")
-                }
-
-                // Check system requirements
+                // Logic: System is 'Ready' only if ALL health checks pass.
                 val allChecksOk = isAccessibilityOn.value && isNotificationOn.value &&
                         isOverlayOn.value && isInternetOn.value &&
                         isFirebaseReady.value && isScreenCaptureActive.value
 
+                // Render the main UI screen.
                 ChildDashboardScreen(
                     deviceId = deviceId.value,
                     consoleLogs = consoleLogs,
@@ -113,10 +113,10 @@ class ChildDashboardActivity : ComponentActivity() {
                     onForceSync = { triggerSync() },
                     onLogout = { performLogout() },
                     onExit = { killApp() },
-                    onEditIdClick = { showEditDialog = true } // 🟢 Open Edit Dialog
+                    onEditIdClick = { showEditDialog = true }
                 )
 
-                // 🟢 EDIT ID DIALOG
+                // Dialog Logic for editing the Device ID.
                 if (showEditDialog) {
                     EditDeviceIdDialog(
                         currentId = deviceId.value,
@@ -146,21 +146,60 @@ class ChildDashboardActivity : ComponentActivity() {
 
     private fun loadDeviceInfo() {
         val prefs = getSharedPreferences("AppConfig", MODE_PRIVATE)
-        // If ID is missing, set a default, but don't generate one here to avoid overwrites
-        deviceId.value = prefs.getString("device_id", "NOT_SET") ?: "NOT_SET"
+        val localId = prefs.getString("device_id", "NOT_SET") ?: "NOT_SET"
+
+        val uid = auth.currentUser?.uid ?: return
+
+        // Check Cloud first
+        db.collection("users").document(uid).get().addOnSuccessListener { doc ->
+            val cloudId = doc.getString("device_id")
+
+            if (!cloudId.isNullOrEmpty()) {
+                // Cloud has it, use it!
+                saveLocalDeviceId(cloudId)
+            } else if (localId != "NOT_SET") {
+                // Cloud is empty but local has one, upload local to Cloud
+                db.collection("users").document(uid).update("device_id", localId)
+                deviceId.value = localId
+            } else {
+                // Both are empty, generate a brand new one
+                val newId = (100000..999999).random().toString()
+                saveNewDeviceId(newId)
+            }
+        }
     }
 
+    // Helper to update UI and Local Prefs without infinite loops
+    private fun saveLocalDeviceId(id: String) {
+        getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
+            putString("device_id", id)
+        }
+        deviceId.value = id
+    }
+
+    /**
+     * PERSISTENCE LOGIC:
+     * Saves the new Device ID to storage.
+     */
+    // Sync to cloud when manually edited
     private fun saveNewDeviceId(newId: String) {
         if (newId.isBlank()) return
-        getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
-            putString("device_id", newId)
-        }
-        deviceId.value = newId
-        addToConsole("Configuration: Device ID changed to '$newId'")
+        val uid = auth.currentUser?.uid ?: return
+
+        saveLocalDeviceId(newId)
+
+        // Push to cloud
+        db.collection("users").document(uid).update("device_id", newId)
+        sendConsoleUpdate("Configuration: Device ID changed to '$newId'")
     }
 
+    /**
+     * HEALTH CHECK LOGIC:
+     * Queries Android System Managers to see if the app's permissions are still active.
+     */
     private fun performHealthCheck() {
         val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        // Check if our specific Accessibility Service is running.
         isAccessibilityOn.value = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
             .any { it.resolveInfo.serviceInfo.packageName == packageName }
 
@@ -173,6 +212,10 @@ class ChildDashboardActivity : ComponentActivity() {
         isScreenCaptureActive.value = ScreenCaptureService.CaptureState.isRunning
     }
 
+    /**
+     * NAVIGATION LOGIC:
+     * Creates intents to open specific pages in the Android System Settings.
+     */
     private fun navigateToSetting(label: String) {
         val intent = when (label) {
             "Accessibility" -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
@@ -187,7 +230,7 @@ class ChildDashboardActivity : ComponentActivity() {
 
     private fun triggerSync() {
         FirebaseSyncManager.syncPendingLogs(this)
-        addToConsole("Sync Event: Cloud synchronization completed.")
+        sendConsoleUpdate("Sync Event: Cloud synchronization completed.")
     }
 
     private fun addToConsole(message: String) {
@@ -199,12 +242,17 @@ class ChildDashboardActivity : ComponentActivity() {
     }
 
 
+    /**
+     * LOGOUT LOGIC:
+     * Removes the 'role' but KEEPS the 'device_id'.
+     * This allows the child to log back in as a child without needing to be re-linked
+     * to the parent device.
+     */
     private fun performLogout() {
-        // 🟢 LOGIC: Only remove the 'role', keep 'device_id' so it persists!
         getSharedPreferences("AppConfig", MODE_PRIVATE).edit {
-            remove("role")
-            // We intentionally do NOT remove "device_id" here.
+            remove("role") // Keep the device_id in prefs!
         }
+        auth.signOut()
         startActivity(Intent(this, RoleSelectionActivity::class.java))
         finish()
     }
@@ -227,7 +275,7 @@ fun ChildDashboardScreen(
     onForceSync: () -> Unit,
     onLogout: () -> Unit,
     onExit: () -> Unit,
-    onEditIdClick: () -> Unit // 🟢 New Callback
+    onEditIdClick: () -> Unit
 ) {
     Scaffold(
         containerColor = AppTheme.Background,
@@ -241,7 +289,7 @@ fun ChildDashboardScreen(
                 .padding(AppTheme.PaddingDefault),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("Child Dashboard", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text("Child Dashboard", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
 
             // Status Section
             ReadyBanner(visible = isReady)
@@ -317,14 +365,6 @@ fun ConnectedDevicesCard() {
                 Icon(Icons.Default.CheckCircle, null, tint = AppTheme.Success, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Parent Device (Active)", fontSize = 14.sp)
-            }
-            Button(
-                onClick = { /* Pair logic */ },
-                modifier = Modifier.padding(top = 12.dp).fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = AppTheme.Background, contentColor = Color.Black),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text("Link New Device", fontSize = 13.sp)
             }
         }
     }
@@ -424,7 +464,6 @@ fun StickyExitButton(onExit: () -> Unit) {
     }
 }
 
-// 🟢 NEW DIALOG FOR EDITING ID
 @Composable
 fun EditDeviceIdDialog(currentId: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var text by remember { mutableStateOf(currentId) }

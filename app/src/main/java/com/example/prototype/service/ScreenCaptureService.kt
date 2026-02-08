@@ -37,7 +37,9 @@ import com.example.prototype.utils.sendConsoleUpdate // Import the extension we 
 import com.googlecode.tesseract.android.TessBaseAPI
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import androidx.core.graphics.scale
 
 class ScreenCaptureService : Service() {
 
@@ -60,6 +62,8 @@ class ScreenCaptureService : Service() {
 
     // Debounce Map: Stores "badword" -> Last Time Seen
     private val debounceMap = ConcurrentHashMap<String, Long>()
+
+    private val ocrExecutor = Executors.newSingleThreadExecutor()
 
     // UI Overlay (Compose)
     private lateinit var windowManager: WindowManager
@@ -141,7 +145,8 @@ class ScreenCaptureService : Service() {
 
                 // Log Attempt
                 val currentId = attemptCount.incrementAndGet()
-                // sendConsoleUpdate("System: Capture Cycle #$currentId started")
+                Log.d(TAG,"System: Capture Cycle #$currentId started")
+                sendConsoleUpdate("System: Capture Cycle #$currentId started")
 
                 val image = try {
                     imageReader.acquireLatestImage()
@@ -152,11 +157,11 @@ class ScreenCaptureService : Service() {
                     val bitmap = imageToBitmap(image)
                     image.close()
 
-                    // Run OCR in background
-                    Thread {
+                    // 🟢 FIX: Submit to the queue instead of spawning a raw Thread
+                    ocrExecutor.execute {
                         runOcr(bitmap, currentId)
-                        bitmap.recycle()
-                    }.start()
+                        bitmap.recycle() // Recycle AFTER OCR is done
+                    }
                 }
             } else {
                 // Not in Facebook: Hide Overlay & Flush Buffer
@@ -178,8 +183,8 @@ class ScreenCaptureService : Service() {
             val startTime = System.currentTimeMillis()
 
             // 1. Optimization: Scale down to improve speed
-            val scaled = Bitmap.createScaledBitmap(bitmap, bitmap.width / 2, bitmap.height / 2, false)
-
+            val scaled = bitmap.scale(bitmap.width / 2, bitmap.height / 2, false)
+            Log.d(TAG, "OCR Processing Cycle #$id")
             // 2. Process Image
             api.setImage(scaled)
             val text = api.utF8Text
@@ -191,6 +196,7 @@ class ScreenCaptureService : Service() {
                 // 3. Analyze text for inappropriate words
                 val result = ContentAnalyzer.analyze(text)
 
+                Log.d(TAG, "OCR Text: $text")
                 if (!result.isClean) {
                     result.incidents.forEach { incident ->
 
@@ -209,6 +215,9 @@ class ScreenCaptureService : Service() {
                             )
 
                             sendConsoleUpdate("FLAG: '${incident.word}' (${incident.severity}) detected in ${duration}ms")
+                            Log.d(TAG,"FLAG: '${incident.word}' (${incident.severity}) detected in ${duration}ms" )
+                        }else{
+                            Log.d(TAG, "Debounced ${incident.word}")
                         }
                     }
                 }
@@ -295,6 +304,7 @@ class ScreenCaptureService : Service() {
         CaptureState.isRunning = false
         if (::projection.isInitialized) projection.stop()
         tess?.end()
+        ocrExecutor.shutdownNow()
         super.onDestroy()
     }
 

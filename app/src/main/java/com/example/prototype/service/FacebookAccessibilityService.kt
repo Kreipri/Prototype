@@ -1,6 +1,7 @@
 package com.example.prototype.service
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.example.prototype.utils.sendConsoleUpdate // Import extension
@@ -24,6 +25,17 @@ class FacebookAccessibilityService : AccessibilityService() {
             if (!ScreenCaptureService.ScreenState.isFacebookOpen) {
                 ScreenCaptureService.ScreenState.isFacebookOpen = true
                 sendConsoleUpdate("App Event: Facebook Opened")
+                Log.d(TAG, "App Event: Facebook Opened")
+
+                if (!ScreenCaptureService.CaptureState.isRunning) {
+                    try {
+                        val intent = Intent(this, OverlayService::class.java)
+                        startService(intent)
+                        Log.d(TAG, "Blocking Facebook: Capture not active")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start overlay", e)
+                    }
+                }
             }
             lastFbEventTime = System.currentTimeMillis()
 
